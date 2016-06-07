@@ -187,7 +187,7 @@ These symbols appear in the ``head`` field of ``Expr``\s in lowered form.
 Method
 ~~~~~~
 
-A unique'd container describing the shared metadata for a single (unspecialized) method.
+A unique'd container describing the shared metadata for a single method.
 
 ``name``, ``module``, ``file``, ``line``, ``sig`` - Metadata to uniquely identify the method
     for the computer and the human
@@ -204,6 +204,8 @@ A unique'd container describing the shared metadata for a single (unspecialized)
     required by compression of the AST, type-inference, or the generation of native code.
 
 ``nargs``, ``isva``, ``called``, ``isstaged`` - Descriptive bit-fields for the source code of this Method.
+
+``min-world`` / ``max-world`` - The range of world ages for which this method is visible.
 
 
 MethodInstance
@@ -231,12 +233,16 @@ See especially :ref:`devdocs-locks` for important details on how to modify these
     may be put here (if ``jlcall_api == 2``), or it could be set to `nothing`
     to just indicate ``rettype`` is inferred
 
+``min-world`` / ``max-world`` - The range of world ages for which this method instance is valid.
+
 ``ftpr`` - The generic jlcall entry point
 
 ``jlcall_api`` - The ABI to use when calling ``fptr``. Some significant ones include:
-    - 0 - not compiled yet
+    - 0 - Not compiled yet.
     - 1 - JL_CALLABLE ``jl_value_t *(*)(jl_function_t *f, jl_value_t *args[nargs], uint32_t nargs)``
-    - 2 - constant (stored in ``inferred``)
+    - 2 - Constant (value stored in ``inferred``)
+    - 3 - With Static-parameters forwarded ``jl_value_t *(*)(jl_svec_t *sparams, jl_function_t *f, jl_value_t *args[nargs], uint32_t nargs)``
+    - 4 - Run in interpreter ``jl_value_t *(*)(jl_method_instance_t *meth, jl_function_t *f, jl_value_t *args[nargs], uint32_t nargs)``
 
 
 CodeInfo

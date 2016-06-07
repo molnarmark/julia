@@ -333,10 +333,14 @@ end
 
 # test jl_get_llvm_fptr. We test functions both in and definitely not in the system image
 definitely_not_in_sysimg() = nothing
-for (f,t) in ((definitely_not_in_sysimg,Tuple{}),
-        (Base.throw_boundserror,Tuple{UnitRange{Int64},Int64}))
-    t = Base.tt_cons(Core.Typeof(f), Base.to_tuple_type(t))
-    llvmf = ccall(:jl_get_llvmf, Ptr{Void}, (Any, Bool, Bool), t, false, true)
+for (f, t) in Any[(definitely_not_in_sysimg, Tuple{}),
+                  (Base.:+, Tuple{Int, Int})]
+    meth = which(f, t)
+    tt = Tuple{typeof(f), t.parameters...}
+    env = (ccall(:jl_match_method, Any, (Any, Any, Any), tt, meth.sig, meth.tvars))[2]
+    world = typemax(UInt)
+    linfo = ccall(:jl_specializations_get_linfo, Ref{Core.MethodInstance}, (Any, Any, Any, UInt), meth, tt, env, world)
+    llvmf = ccall(:jl_get_llvmf_decl, Ptr{Void}, (Any, UInt, Bool), linfo::Core.MethodInstance, world, true)
     @test llvmf != C_NULL
     @test ccall(:jl_get_llvm_fptr, Ptr{Void}, (Ptr{Void},), llvmf) != C_NULL
 end
@@ -580,6 +584,7 @@ end
 
 # PR #18888: code_typed shouldn't cache if not optimizing
 let
+    world = typemax(UInt)
     f18888() = return nothing
     m = first(methods(f18888, Tuple{}))
     @test m.specializations == nothing
@@ -587,11 +592,11 @@ let
 
     code_typed(f18888, Tuple{}; optimize=false)
     @test m.specializations != nothing  # uncached, but creates the specializations entry
-    code = Core.Inference.code_for_method(m, Tuple{ft}, Core.svec(), true)
+    code = Core.Inference.code_for_method(m, Tuple{ft}, Core.svec(), world, true)
     @test !isdefined(code, :inferred)
 
     code_typed(f18888, Tuple{}; optimize=true)
-    code = Core.Inference.code_for_method(m, Tuple{ft}, Core.svec(), true)
+    code = Core.Inference.code_for_method(m, Tuple{ft}, Core.svec(), world, true)
     @test isdefined(code, :inferred)
 end
 
