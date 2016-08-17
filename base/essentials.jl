@@ -47,13 +47,13 @@ end
 argtail(x, rest...) = rest
 tail(x::Tuple) = argtail(x...)
 
-tuple_type_head(T::TypeConstructor) = tuple_type_head(T.body)
+tuple_type_head(T::UnionAll) = tuple_type_head(T.body)
 function tuple_type_head(T::DataType)
     @_pure_meta
     T.name === Tuple.name || throw(MethodError(tuple_type_head, (T,)))
     return T.parameters[1]
 end
-tuple_type_tail(T::TypeConstructor) = tuple_type_tail(T.body)
+tuple_type_tail(T::UnionAll) = tuple_type_tail(T.body)
 function tuple_type_tail(T::DataType)
     @_pure_meta
     T.name === Tuple.name || throw(MethodError(tuple_type_tail, (T,)))

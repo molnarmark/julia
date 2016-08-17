@@ -117,7 +117,7 @@ static int8_t jl_cachearg_offset(jl_methtable_t *mt)
 /// ----- Insertion logic for special entries ----- ///
 
 // get or create the MethodInstance for a specialization
-JL_DLLEXPORT jl_method_instance_t *jl_specializations_get_linfo(jl_method_t *m, jl_tupletype_t *type, jl_svec_t *sparams)
+JL_DLLEXPORT jl_method_instance_t *jl_specializations_get_linfo(jl_method_t *m, jl_value_t *type, jl_svec_t *sparams)
 {
     JL_LOCK(&m->writelock);
     jl_typemap_entry_t *sf = jl_typemap_assoc_by_type(m->specializations, type, NULL, 2, /*subtype*/0, /*offs*/0);
@@ -165,14 +165,14 @@ void jl_mk_builtin_func(jl_datatype_t *dt, const char *name, jl_fptr_t fptr)
     jl_method_instance_t *li = jl_new_method_instance_uninit();
     li->fptr = fptr;
     li->jlcall_api = 1;
-    li->specTypes = jl_anytuple_type;
+    li->specTypes = (jl_value_t*)jl_anytuple_type;
 
     li->def = jl_new_method_uninit();
     li->def->name = sname;
     li->def->module = jl_core_module;
     li->def->isva = 1;
     li->def->nargs = 2;
-    li->def->sig = jl_anytuple_type;
+    li->def->sig = (jl_value_t*)jl_anytuple_type;
     li->def->tvars = jl_emptysvec;
     li->def->sparam_syms = jl_emptysvec;
 
@@ -351,8 +351,8 @@ static jl_tupletype_t *join_tsig(jl_tupletype_t *tt, jl_tupletype_t *sig)
             // and the result of matching the type signature
             // needs to be corrected to the leaf type 'kind'
             jl_value_t *kind = jl_typeof(jl_tparam0(elt));
-            if (jl_subtype(kind, decl_i, 0)) {
-                if (!jl_subtype((jl_value_t*)jl_type_type, decl_i, 0)) {
+            if (jl_subtype(kind, decl_i)) {
+                if (!jl_subtype((jl_value_t*)jl_type_type, decl_i)) {
                     // TypeConstructors are problematic because they can be alternate
                     // representations of any type. If we matched this method because
                     // it matched the leaf type TypeConstructor, then don't
@@ -411,7 +411,7 @@ static void jl_cacheable_sig(
         // avoid specializing on an argument of type Tuple
         // unless matching a declared type of `::Type`
         if (jl_is_type_type(elt) && jl_is_tuple_type(jl_tparam0(elt)) &&
-            (!jl_subtype(decl_i, (jl_value_t*)jl_type_type, 0) || is_kind(decl_i))) { // Type{Tuple{...}}
+            (!jl_subtype(decl_i, (jl_value_t*)jl_type_type) || is_kind(decl_i))) { // Type{Tuple{...}}
             elt = (jl_value_t*)jl_anytuple_type_type; // Type{T<:Tuple}
             if (!*newparams) *newparams = jl_svec_copy(type->parameters);
             jl_svecset(*newparams, i, elt);
@@ -419,7 +419,7 @@ static void jl_cacheable_sig(
         }
 
         int notcalled_func = (i > 0 && i <= 8 && !(definition->called & (1 << (i - 1))) &&
-                              jl_subtype(elt, (jl_value_t*)jl_function_type, 0));
+                              jl_subtype(elt, (jl_value_t*)jl_function_type));
         if (decl_i == jl_ANY_flag) {
             // don't specialize on slots marked ANY
             if (!*newparams) *newparams = jl_svec_copy(type->parameters);
@@ -428,9 +428,9 @@ static void jl_cacheable_sig(
         }
         else if (notcalled_func && (decl_i == (jl_value_t*)jl_any_type ||
                                     decl_i == (jl_value_t*)jl_function_type ||
-                                    (jl_is_uniontype(decl_i) && jl_svec_len(((jl_uniontype_t*)decl_i)->types)==2 &&
-                                     jl_subtype((jl_value_t*)jl_function_type, decl_i, 0) &&
-                                     jl_subtype((jl_value_t*)jl_datatype_type, decl_i, 0)))) {
+                                    (jl_is_uniontype(decl_i) && //jl_svec_len(((jl_uniontype_t*)decl_i)->types)==2 &&
+                                     jl_subtype((jl_value_t*)jl_function_type, decl_i) &&
+                                     jl_subtype((jl_value_t*)jl_datatype_type, decl_i)))) {
             // and attempt to despecialize types marked Function, Callable, or Any
             // when called with a subtype of Function but is not called
             if (!*newparams) *newparams = jl_svec_copy(type->parameters);
@@ -440,7 +440,7 @@ static void jl_cacheable_sig(
         }
         else if (jl_is_type_type(elt) && jl_is_type_type(jl_tparam0(elt)) &&
                  // give up on specializing static parameters for Type{Type{Type{...}}}
-                 (jl_is_type_type(jl_tparam0(jl_tparam0(elt))) || !jl_has_typevars(decl_i))) {
+                 (jl_is_type_type(jl_tparam0(jl_tparam0(elt))) || !jl_has_free_typevars(decl_i))) {
             /*
               actual argument was Type{...}, we computed its type as
               Type{Type{...}}. we must avoid unbounded nesting here, so
@@ -470,7 +470,7 @@ static void jl_cacheable_sig(
             *need_guard_entries = 1;
         }
         else if (jl_is_type_type(elt) && very_general_type(decl_i) &&
-                 !jl_has_typevars(decl_i)) {
+                 !jl_has_free_typevars(decl_i)) {
             /*
               here's a fairly simple heuristic: if this argument slot's
               declared type is general (Type, Any, or ANY),
@@ -529,8 +529,8 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
             // and the result of matching the type signature
             // needs to be corrected to the leaf type 'kind'
             jl_value_t *kind = jl_typeof(jl_tparam0(elt));
-            if (kind != (jl_value_t*)jl_tvar_type && jl_subtype(kind, decl_i, 0)) {
-                if (!jl_subtype((jl_value_t*)jl_type_type, decl_i, 0)) {
+            if (kind != (jl_value_t*)jl_tvar_type && jl_subtype(kind, decl_i)) {
+                if (!jl_subtype((jl_value_t*)jl_type_type, decl_i)) {
                     return 0;
                 }
             }
@@ -538,19 +538,19 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
         // avoid specializing on an argument of type Tuple
         // unless matching a declared type of `::Type`
         if (jl_is_type_type(elt) && jl_is_tuple_type(jl_tparam0(elt)) &&
-            (!jl_subtype(decl_i, (jl_value_t*)jl_type_type, 0) || is_kind(decl_i))) { // Type{Tuple{...}}
+            (!jl_subtype(decl_i, (jl_value_t*)jl_type_type) || is_kind(decl_i))) { // Type{Tuple{...}}
             if (elt != (jl_value_t*)jl_anytuple_type_type)
                 return 0;
             continue;
         }
 
         int notcalled_func = (i > 0 && i <= 8 && !(definition->called & (1 << (i - 1))) &&
-                              jl_subtype(elt, (jl_value_t*)jl_function_type, 0));
+                              jl_subtype(elt, (jl_value_t*)jl_function_type));
         if (notcalled_func && (decl_i == (jl_value_t*)jl_any_type ||
                                decl_i == (jl_value_t*)jl_function_type ||
-                               (jl_is_uniontype(decl_i) && jl_svec_len(((jl_uniontype_t*)decl_i)->types)==2 &&
-                                jl_subtype((jl_value_t*)jl_function_type, decl_i, 0) &&
-                                jl_subtype((jl_value_t*)jl_datatype_type, decl_i, 0)))) {
+                               (jl_is_uniontype(decl_i) && //jl_svec_len(((jl_uniontype_t*)decl_i)->types)==2 &&
+                                jl_subtype((jl_value_t*)jl_function_type, decl_i) &&
+                                jl_subtype((jl_value_t*)jl_datatype_type, decl_i)))) {
             // and attempt to despecialize types marked Function, Callable, or Any
             // when called with a subtype of Function but is not called
             if (elt != (jl_value_t*)jl_function_type)
@@ -559,7 +559,7 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
         }
         else if (jl_is_type_type(elt) && jl_is_type_type(jl_tparam0(elt)) &&
                  // give up on specializing static parameters for Type{Type{Type{...}}}
-                 (jl_is_type_type(jl_tparam0(jl_tparam0(elt))) || !jl_has_typevars(decl_i))) {
+                 (jl_is_type_type(jl_tparam0(jl_tparam0(elt))) || !jl_has_free_typevars(decl_i))) {
             /*
               actual argument was Type{...}, we computed its type as
               Type{Type{...}}. we must avoid unbounded nesting here, so
@@ -577,7 +577,7 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
                 assert(di != (jl_value_t*)jl_bottom_type);
                 if (is_kind(di))
                     return 0;
-                else if (!jl_subtype(di, elt, 0) || !jl_subtype(elt, di, 0))
+                else if (!jl_subtype(di, elt) || !jl_subtype(elt, di))
                     return 0;
             }
             else {
@@ -586,7 +586,7 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
             continue;
         }
         else if (jl_is_type_type(elt) && very_general_type(decl_i) &&
-                 !jl_has_typevars(decl_i)) {
+                 !jl_has_free_typevars(decl_i)) {
             /*
               here's a fairly simple heuristic: if this argument slot's
               declared type is general (Type, Any, or ANY),
@@ -666,7 +666,7 @@ static jl_method_instance_t *cache_method(jl_methtable_t *mt, union jl_typemap_t
         size_t j = i;
         int all_are_subtypes = 1;
         for (; j < jl_svec_len(newparams); j++) {
-            if (!jl_subtype(jl_svecref(newparams, j), lasttype, 0)) {
+            if (!jl_subtype(jl_svecref(newparams, j), lasttype)) {
                 all_are_subtypes = 0;
                 break;
             }
@@ -1048,10 +1048,12 @@ static void invalidate_conflicting(union jl_typemap_t *pml, jl_value_t *type, jl
     }
 }
 
-static void update_max_args(jl_methtable_t *mt, jl_tupletype_t *type)
+static void update_max_args(jl_methtable_t *mt, jl_value_t *type)
 {
+    type = jl_unwrap_unionall(type);
+    assert(jl_is_datatype(type));
     size_t na = jl_nparams(type);
-    if (jl_va_tuple_kind(type) == JL_VARARG_UNBOUND)
+    if (jl_va_tuple_kind((jl_datatype_t*)type) == JL_VARARG_UNBOUND)
         na--;
     if (na > mt->max_args)
         mt->max_args = na;
@@ -1061,9 +1063,8 @@ void jl_method_table_insert(jl_methtable_t *mt, jl_method_t *method, jl_tupletyp
 {
     assert(jl_is_method(method));
     assert(jl_is_mtable(mt));
-    jl_tupletype_t *type = method->sig;
+    jl_value_t *type = method->sig;
     jl_svec_t *tvars = method->tvars;
-    assert(jl_is_tuple_type(type));
     jl_value_t *oldvalue = NULL;
     JL_GC_PUSH1(&oldvalue);
     JL_LOCK(&mt->writelock);
@@ -1269,7 +1270,7 @@ jl_method_instance_t *jl_get_specialization1(jl_tupletype_t *types)
 {
     JL_TIMING(METHOD_LOOKUP_COMPILE);
     assert(jl_nparams(types) > 0);
-    if (!jl_is_leaf_type((jl_value_t*)types) || jl_has_typevars((jl_value_t*)types))
+    if (!jl_is_leaf_type((jl_value_t*)types) || jl_has_free_typevars((jl_value_t*)types))
         return NULL;
     assert(jl_is_datatype(jl_tparam0(types)));
 
@@ -1351,8 +1352,11 @@ jl_tupletype_t *jl_argtype_with_function(jl_function_t *f, jl_tupletype_t *types
     return (jl_tupletype_t*)tt;
 }
 
+#if 0
 static int tupletype_any_bottom(jl_value_t *sig)
 {
+    sig = jl_unwrap_unionall(sig);
+    assert(jl_is_tuple_type(sig));
     jl_svec_t *types = ((jl_tupletype_t*)sig)->types;
     size_t i, l = jl_svec_len(types);
     for (i = 0; i < l; i++) {
@@ -1447,7 +1451,8 @@ getnext:
     JL_GC_POP();
     return complete;
 }
-
+#endif
+#if 0
 static int _compile_all_union(jl_tupletype_t *sig, jl_svec_t *tvars)
 {
     // f(::Union{...}, ...) is a common pattern
@@ -1469,8 +1474,8 @@ static int _compile_all_union(jl_tupletype_t *sig, jl_svec_t *tvars)
         }
     }
 
-    if (count_unions == 0)
-        return _compile_all_tvar_union(sig, tvars);
+    //if (count_unions == 0)
+    //    return _compile_all_tvar_union(sig, tvars);
 
     int *idx = (int*)alloca(sizeof(int) * count_unions);
     for (i = 0; i < count_unions; i++) {
@@ -1505,13 +1510,14 @@ static int _compile_all_union(jl_tupletype_t *sig, jl_svec_t *tvars)
             }
         }
         methsig = jl_apply_tuple_type(p);
-        if (!_compile_all_tvar_union(methsig, tvars))
-            complete = 0;
+        //if (!_compile_all_tvar_union(methsig, tvars))
+        //    complete = 0;
     }
 
     JL_GC_POP();
     return complete;
 }
+#endif
 
 static void _compile_all_deq(jl_array_t *found)
 {
@@ -1542,7 +1548,7 @@ static void _compile_all_deq(jl_array_t *found)
 
         // keep track of whether all possible signatures have been cached (and thus whether it can skip trying to compile the template function)
         // this is necessary because many intrinsics try to call static_eval and thus are not compilable unspecialized
-        int complete = _compile_all_union(ml->sig, ml->tvars);
+        int complete = 0;//_compile_all_union(ml->sig, ml->tvars);
         if (complete) {
             if (linfo->fptr == NULL && linfo->functionObjectsDecls.functionObject == NULL)
                 // indicate that this method doesn't need to be compiled, because it was fully covered above
@@ -1956,7 +1962,8 @@ static jl_function_t *jl_new_generic_function_with_supertype(jl_sym_t *name, jl_
     }
     jl_sym_t *tname = jl_symbol(prefixed);
     free(prefixed);
-    jl_datatype_t *ftype = jl_new_datatype(tname, st, jl_emptysvec, jl_emptysvec, jl_emptysvec, 0, 0, 0);
+    jl_datatype_t *ftype = (jl_datatype_t*)jl_new_datatype(tname, st, jl_emptysvec, jl_emptysvec, jl_emptysvec, 0, 0, 0);
+    assert(jl_is_datatype(ftype));
     JL_GC_PUSH1(&ftype);
     ftype->name->mt->name = name; jl_gc_wb(ftype->name->mt, name);
     ftype->name->module = module; jl_gc_wb(ftype->name, module);
@@ -2055,8 +2062,8 @@ static int ml_matches_visitor(jl_typemap_entry_t *ml, struct typemap_intersectio
             // Instead we should have computed the intersection as (UnionAll S Type{T{S}}),
             // which is a bigger type that would not have been a subtype of the prior
             // match (prior_ti). We simulate that for now by checking jl_has_typevars.
-            if (jl_is_leaf_type(prior_ti) && !jl_has_typevars(closure->match.ti) && !jl_has_typevars(prior_ti) &&
-                jl_subtype(closure->match.ti, prior_ti, 0)) {
+            if (jl_is_leaf_type(prior_ti) && !jl_has_free_typevars(closure->match.ti) && !jl_has_free_typevars(prior_ti) &&
+                jl_subtype(closure->match.ti, prior_ti)) {
                 skip = 1;
                 break;
             }
@@ -2101,7 +2108,7 @@ static int ml_matches_visitor(jl_typemap_entry_t *ml, struct typemap_intersectio
         // NOTE: jl_subtype check added in case the intersection is
         // over-approximated.
         if (matched_all_typevars && jl_types_equal(closure->match.ti, closure->match.type) &&
-            jl_subtype(closure->match.type, (jl_value_t*)ml->sig, 0)) {
+            jl_subtype(closure->match.type, (jl_value_t*)ml->sig)) {
             done = 1; // terminate visiting method list
         }
         // here we have reached a definition that fully covers the arguments.
@@ -2139,7 +2146,7 @@ static int ml_matches_visitor(jl_typemap_entry_t *ml, struct typemap_intersectio
                         jl_value_t *ambi = jl_type_intersection_matching((jl_value_t*)ml->sig,
                                                                          (jl_value_t*)mambig->sig,
                                                                          &env, mambig->tvars);
-                        if (jl_subtype(closure->match.ti, ambi, 0)) {
+                        if (jl_subtype(closure->match.ti, ambi)) {
                             return_this_match = 0;
                             break;
                         }

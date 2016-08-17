@@ -718,7 +718,7 @@ static jl_cgval_t emit_cglobal(jl_value_t **args, size_t nargs, jl_codectx_t *ct
         }
 
         JL_TYPECHK(cglobal, type, rt);
-        rt = (jl_value_t*)jl_apply_type((jl_value_t*)jl_pointer_type, jl_svec1(rt));
+        rt = (jl_value_t*)jl_apply_type1((jl_value_t*)jl_pointer_type, rt);
     }
     else {
         rt = (jl_value_t*)jl_voidpointer_type;
@@ -983,7 +983,7 @@ static jl_cgval_t emit_llvmcall(jl_value_t **args, size_t nargs, jl_codectx_t *c
 
         Value *v = julia_to_native(t, toboxed, tti, arg, false, false, false, false, i, ctx, NULL);
         // make sure args are rooted
-        bool issigned = jl_signed_type && jl_subtype(tti, (jl_value_t*)jl_signed_type, 0);
+        bool issigned = jl_signed_type && jl_subtype(tti, (jl_value_t*)jl_signed_type);
         argvals[i] = llvm_type_rewrite(v, t, t, false, false, issigned, ctx);
     }
 
@@ -1218,7 +1218,7 @@ static std::string generate_func_sig(
                 // small integer arguments.
                 jl_datatype_t *bt = (jl_datatype_t*)tti;
                 if (jl_datatype_size(bt) < 4) {
-                    if (jl_signed_type && jl_subtype(tti, (jl_value_t*)jl_signed_type, 0))
+                    if (jl_signed_type && jl_subtype(tti, (jl_value_t*)jl_signed_type))
                         av = Attribute::SExt;
                     else
                         av = Attribute::ZExt;
@@ -1336,11 +1336,11 @@ static jl_cgval_t emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
         if (rt == NULL) {
             static_rt = false;
             if (jl_is_type_type(rtt_)) {
-                if (jl_subtype(jl_tparam0(rtt_), (jl_value_t*)jl_pointer_type, 0)) {
+                if (jl_subtype(jl_tparam0(rtt_), (jl_value_t*)jl_pointer_type)) {
                     // substitute Ptr{Void} for statically-unknown pointer type
                     rt = (jl_value_t*)jl_voidpointer_type;
                 }
-                else if (jl_subtype(jl_tparam0(rtt_), (jl_value_t*)jl_array_type, 0)) {
+                else if (jl_subtype(jl_tparam0(rtt_), (jl_value_t*)jl_array_type)) {
                     // `Array` used as return type just returns a julia object reference
                     rt = (jl_value_t*)jl_any_type;
                     static_rt = true;
@@ -1775,7 +1775,7 @@ static jl_cgval_t emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
 
         Value *v = julia_to_native(largty, toboxed, jargty, arg, addressOf, byRef, inReg,
                                    false, ai + 1, ctx, &needStackRestore);
-        bool issigned = jl_signed_type && jl_subtype(jargty, (jl_value_t*)jl_signed_type, 0);
+        bool issigned = jl_signed_type && jl_subtype(jargty, (jl_value_t*)jl_signed_type);
         argvals[ai + sret] = llvm_type_rewrite(v, largty,
                 ai + sret < fargt_sig.size() ? fargt_sig.at(ai + sret) : fargt_vasig,
                 false, byRef, issigned, ctx);

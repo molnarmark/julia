@@ -7,25 +7,24 @@ typejoin(t::ANY) = (@_pure_meta; t)
 typejoin(t::ANY, ts...) = (@_pure_meta; typejoin(t, typejoin(ts...)))
 function typejoin(a::ANY, b::ANY)
     @_pure_meta
-    if isa(a,TypeConstructor); a = a.body; end
-    if isa(b,TypeConstructor); b = b.body; end
     if a <: b
         return b
     elseif b <: a
         return a
     end
+    if isa(a,UnionAll); a = a.body; end
+    if isa(b,UnionAll); b = b.body; end
     if isa(a,TypeVar)
         return typejoin(a.ub, b)
     end
     if isa(b,TypeVar)
         return typejoin(a, b.ub)
     end
-    if isa(a,Union) || isa(b,Union)
-        u = Union{a, b}
-        if !isa(u,Union)
-            return u
-        end
-        return reduce(typejoin, Bottom, u.types)
+    if isa(a,Union)
+        return typejoin(typejoin(a.a,a.b), b)
+    end
+    if isa(b.Union)
+        return typejoin(a, typejoin(b.a,b.b))
     end
     if a <: Tuple
         if !(b <: Tuple)

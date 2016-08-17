@@ -1202,9 +1202,9 @@
                 ,@(map (lambda (l r) (make-assignment l (expand-forms r)))
                        params
                        (symbols->typevars params bounds #f))
-                (call (core TypeConstructor)
-                      (call (core svec) ,@params)
-                      ,(expand-forms type-ex))))))))
+                ,(foldl (lambda (var type) `(call (core UnionAll) ,var ,type))
+                        (expand-forms type-ex)
+                        (reverse params))))))))
       (expand-forms
        `(const (= ,(cadr e) ,(caddr e))))))
 

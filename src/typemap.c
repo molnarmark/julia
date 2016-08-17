@@ -19,10 +19,13 @@ extern "C" {
 // compute whether the specificity of this type is equivalent to Any in the sort order
 static int jl_is_any(jl_value_t *t1)
 {
-    return (t1 == (jl_value_t*)jl_any_type ||
+    return (t1 == (jl_value_t*)jl_any_type || t1 == jl_ANY_flag);
+    // TODO jb/subtype
+    /*
             (jl_is_typevar(t1) &&
              ((jl_tvar_t*)t1)->ub == (jl_value_t*)jl_any_type &&
              !((jl_tvar_t*)t1)->bound));
+    */
 }
 
 // ----- Type Signature Subtype Testing ----- //
@@ -57,7 +60,7 @@ static int sig_match_by_type_simple(jl_value_t **types, size_t n, jl_tupletype_t
                     // analogous to the situation with tuples.
                 }
                 else if (jl_is_typevar(tp0)) {
-                    if (!jl_subtype(jl_tparam0(a), ((jl_tvar_t*)tp0)->ub, 0))
+                    if (!jl_subtype(jl_tparam0(a), ((jl_tvar_t*)tp0)->ub))
                         return 0;
                 }
                 else {
@@ -89,7 +92,7 @@ static int sig_match_by_type_simple(jl_value_t **types, size_t n, jl_tupletype_t
         }
         jl_value_t *t = jl_tparam0(decl);
         for(; i < n; i++) {
-            if (!jl_subtype(types[i], t, 0))
+            if (!jl_subtype(types[i], t))
                 return 0;
         }
         return 1;
@@ -140,7 +143,7 @@ static inline int sig_match_simple(jl_value_t **args, size_t n, jl_value_t **sig
                 // analogous to the situation with tuples.
             }
             else if (jl_is_typevar(tp0)) {
-                if (!jl_subtype(a, ((jl_tvar_t*)tp0)->ub, 0))
+                if (!jl_subtype(a, ((jl_tvar_t*)tp0)->ub))
                     return 0;
             }
             else {
@@ -160,7 +163,7 @@ static inline int sig_match_simple(jl_value_t **args, size_t n, jl_value_t **sig
         }
         jl_value_t *t = jl_tparam0(decl);
         for(; i < n; i++) {
-            if (!jl_subtype(args[i], t, 1))
+            if (!jl_isa(args[i], t))
                 return 0;
         }
         return 1;
@@ -390,7 +393,7 @@ jl_value_t *jl_lookup_match(jl_value_t *a, jl_value_t *b, jl_svec_t **penv, jl_s
           issue #5254
         */
         if (val == (jl_value_t*)jl_bottom_type) {
-            if (!jl_subtype(a, ti, 0)) {
+            if (!jl_subtype(a, ti)) {
                 JL_GC_POP();
                 return (jl_value_t*)jl_bottom_type;
             }
@@ -470,9 +473,9 @@ static int jl_typemap_intersection_array_visitor(struct jl_ordereddict_t *a, jl_
              (jl_is_uniontype(ty) || // punt on Union{...} right now
               jl_typeof(t) == ty || // deal with kinds (e.g. ty == DataType && t == Type{t})
               (jl_is_type_type(ty) && (jl_is_typevar(jl_tparam0(ty)) ?
-                                       jl_subtype(t, ((jl_tvar_t*)jl_tparam0(ty))->ub, 0) : // deal with ty == Type{<:T}
-                                       jl_subtype(t, jl_tparam0(ty), 0)))) // deal with ty == Type{T{#<:T}}
-                    : jl_subtype(t, ty, 0))) // `t` is a leaftype, so intersection test becomes subtype
+                                       jl_subtype(t, ((jl_tvar_t*)jl_tparam0(ty))->ub) : // deal with ty == Type{<:T}
+                                       jl_subtype(t, jl_tparam0(ty))))) // deal with ty == Type{T{#<:T}}
+                    : jl_subtype(t, ty))) // `t` is a leaftype, so intersection test becomes subtype
             if (!jl_typemap_intersection_visitor(ml, offs+1, closure))
                 return 0;
     }
@@ -580,10 +583,7 @@ int sigs_eq(jl_value_t *a, jl_value_t *b, int useenv)
     // useenv == 0 : subtyping + ensure typevars correspond
     // useenv == 1 : subtyping + ensure typevars correspond + fail if bound != bound in some typevar match
     // useenv == 2 : ignore typevars (because UnionAll getting lost in intersection can cause jl_types_equal to fail in the wrong direction for some purposes)
-    if (useenv != 2 && (jl_has_typevars(a) || jl_has_typevars(b))) {
-        return jl_types_equal_generic(a, b, useenv);
-    }
-    return jl_subtype(a, b, 0) && jl_subtype(b, a, 0);
+    return jl_types_equal(a, b);
 }
 
 /*
@@ -625,7 +625,7 @@ static jl_typemap_entry_t *jl_typemap_assoc_by_type_(jl_typemap_entry_t *ml, jl_
             else if (ml->tvars == jl_emptysvec)
                 ismatch = jl_tuple_subtype(jl_svec_data(types->parameters), n, ml->sig, 0);
             else if (penv == NULL) {
-                ismatch = jl_type_match((jl_value_t*)types, (jl_value_t*)ml->sig) != (jl_value_t*)jl_false;
+                ismatch = jl_subtype((jl_value_t*)types, (jl_value_t*)ml->sig);
             }
             else {
                 // TODO: this is missing the actual subtype test,
@@ -670,7 +670,7 @@ static jl_typemap_entry_t *jl_typemap_assoc_by_type_(jl_typemap_entry_t *ml, jl_
                 size_t i, l;
                 for (i = 0, l = jl_svec_len(ml->guardsigs); i < l; i++) {
                     // see corresponding code in jl_typemap_assoc_exact
-                    if (jl_subtype((jl_value_t*)types, jl_svecref(ml->guardsigs, i), 0)) {
+                    if (jl_subtype((jl_value_t*)types, jl_svecref(ml->guardsigs, i))) {
                         ismatch = 0;
                         break;
                     }
@@ -1061,8 +1061,8 @@ jl_typemap_entry_t *jl_typemap_insert(union jl_typemap_t *cache, jl_value_t *par
         jl_value_t *decl = jl_field_type(type, i);
         if (decl == (jl_value_t*)jl_datatype_type)
             newrec->isleafsig = 0; // Type{} may have a higher priority than DataType
-        else if (decl == (jl_value_t*)jl_typector_type)
-            newrec->isleafsig = 0; // Type{} may have a higher priority than TypeConstructor
+        else if (decl == (jl_value_t*)jl_unionall_type)
+            newrec->isleafsig = 0; // Type{} may have a higher priority than UnionAll
         else if (jl_is_type_type(decl))
             newrec->isleafsig = 0; // Type{} may need special processing to compute the match
         else if (jl_is_vararg_type(decl))

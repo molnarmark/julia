@@ -175,11 +175,6 @@ static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8
     return ans;
 }
 
-static int jl_is_type(jl_value_t *x)
-{
-    return jl_is_datatype(x) || jl_is_uniontype(x) || jl_is_unionall(x) || x == jl_bottom_type;
-}
-
 static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e)
 {
     // take apart unions before handling vars
