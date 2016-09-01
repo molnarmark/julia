@@ -52,6 +52,7 @@ jl_datatype_t *jl_initerror_type;
 jl_datatype_t *jl_undefvarerror_type;
 jl_unionall_t *jl_ref_type;
 jl_unionall_t *jl_pointer_type;
+jl_typename_t *jl_pointer_typename;
 jl_datatype_t *jl_void_type;
 jl_datatype_t *jl_voidpointer_type;
 jl_value_t *jl_an_empty_vec_any=NULL;
@@ -565,7 +566,7 @@ JL_DLLEXPORT jl_code_info_t *jl_copy_code_info(jl_code_info_t *src)
 }
 
 // return a new lambda-info that has some extra static parameters merged in
-jl_method_instance_t *jl_get_specialized(jl_method_t *m, jl_tupletype_t *types, jl_svec_t *sp)
+jl_method_instance_t *jl_get_specialized(jl_method_t *m, jl_value_t *types, jl_svec_t *sp)
 {
     assert(jl_svec_len(m->sparam_syms) == jl_svec_len(sp) || sp == jl_emptysvec);
     jl_method_instance_t *new_linfo = jl_new_method_instance_uninit();
@@ -1180,7 +1181,7 @@ JL_DLLEXPORT jl_datatype_t *jl_new_bitstype(jl_value_t *name, jl_datatype_t *sup
         alignm = MAX_ALIGN;
     bt->size = nbytes;
     bt->layout = jl_get_layout(0, alignm, 0, NULL);
-    return w;
+    return bt;
 }
 
 // unionall types -------------------------------------------------------------

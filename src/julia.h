@@ -552,6 +552,7 @@ extern JL_DLLEXPORT jl_datatype_t *jl_signed_type;
 extern JL_DLLEXPORT jl_datatype_t *jl_voidpointer_type;
 extern JL_DLLEXPORT jl_unionall_t *jl_pointer_type;
 extern JL_DLLEXPORT jl_unionall_t *jl_ref_type;
+extern JL_DLLEXPORT jl_typename_t *jl_pointer_typename;
 
 extern JL_DLLEXPORT jl_value_t *jl_array_uint8_type;
 extern JL_DLLEXPORT jl_value_t *jl_array_any_type;
@@ -983,6 +984,7 @@ JL_DLLEXPORT int jl_args_morespecific(jl_value_t *a, jl_value_t *b);
 JL_DLLEXPORT const char *jl_typename_str(jl_value_t *v);
 JL_DLLEXPORT const char *jl_typeof_str(jl_value_t *v);
 JL_DLLEXPORT int jl_type_morespecific(jl_value_t *a, jl_value_t *b);
+jl_value_t *jl_unwrap_unionall(jl_value_t *v);
 
 #ifdef NDEBUG
 STATIC_INLINE int jl_is_leaf_type_(jl_value_t *v)
@@ -1101,15 +1103,21 @@ typedef enum {
 
 STATIC_INLINE int jl_is_vararg_type(jl_value_t *v)
 {
+    v = jl_unwrap_unionall(v);
     return (jl_is_datatype(v) &&
             ((jl_datatype_t*)(v))->name == jl_vararg_typename);
+}
+
+STATIC_INLINE jl_value_t *jl_unwrap_vararg(jl_value_t *v)
+{
+    return jl_tparam0(jl_unwrap_unionall(v));
 }
 
 STATIC_INLINE jl_vararg_kind_t jl_vararg_kind(jl_value_t *v)
 {
     if (!jl_is_vararg_type(v))
         return JL_VARARG_NONE;
-    jl_value_t *lenv = jl_tparam1(v);
+    jl_value_t *lenv = jl_tparam1(jl_unwrap_unionall(v));
     if (jl_is_long(lenv))
         return JL_VARARG_INT;
     if (jl_is_typevar(lenv))
@@ -1172,7 +1180,7 @@ JL_DLLEXPORT void jl_array_del_beg(jl_array_t *a, size_t dec);
 JL_DLLEXPORT void jl_array_sizehint(jl_array_t *a, size_t sz);
 JL_DLLEXPORT void jl_array_ptr_1d_push(jl_array_t *a, jl_value_t *item);
 JL_DLLEXPORT void jl_array_ptr_1d_push2(jl_array_t *a, jl_value_t *b, jl_value_t *c);
-JL_DLLEXPORT jl_value_t *jl_apply_array_type(jl_datatype_t *type, size_t dim);
+JL_DLLEXPORT jl_value_t *jl_apply_array_type(jl_value_t *type, size_t dim);
 // property access
 JL_DLLEXPORT void *jl_array_ptr(jl_array_t *a);
 JL_DLLEXPORT void *jl_array_eltype(jl_value_t *a);

@@ -844,7 +844,7 @@ JL_DLLEXPORT void jl_get_system_hooks(void)
     jl_methoderror_type = (jl_datatype_t*)basemod("MethodError");
     jl_loaderror_type = (jl_datatype_t*)basemod("LoadError");
     jl_initerror_type = (jl_datatype_t*)basemod("InitError");
-    jl_complex_type = (jl_datatype_t*)basemod("Complex");
+    jl_complex_type = (jl_unionall_t*)basemod("Complex");
 }
 
 void jl_get_builtins(void)

@@ -319,15 +319,16 @@ static int very_general_type(jl_value_t *t)
                    ((jl_tvar_t*)t)->ub==(jl_value_t*)jl_any_type)));
 }
 
-jl_value_t *jl_nth_slot_type(jl_tupletype_t *sig, size_t i)
+jl_value_t *jl_nth_slot_type(jl_value_t *sig, size_t i)
 {
+    sig = jl_unwrap_unionall(sig);
     size_t len = jl_field_count(sig);
     if (len == 0)
         return NULL;
     if (i < len-1)
         return jl_tparam(sig, i);
     if (jl_is_vararg_type(jl_tparam(sig,len-1)))
-        return jl_tparam0(jl_tparam(sig,len-1));
+        return jl_unwrap_vararg(jl_tparam(sig,len-1));
     if (i == len-1)
         return jl_tparam(sig, i);
     return NULL;
@@ -453,7 +454,7 @@ static void jl_cacheable_sig(
                 jl_value_t *declt = jl_tparam(decl, i);
                 // for T..., intersect with T
                 if (jl_is_vararg_type(declt))
-                    declt = jl_tparam0(declt);
+                    declt = jl_unwrap_vararg(declt);
                 jl_value_t *di = jl_type_intersection(declt, (jl_value_t*)jl_typetype_type);
                 assert(di != (jl_value_t*)jl_bottom_type);
                 if (is_kind(di))
@@ -572,7 +573,7 @@ JL_DLLEXPORT int jl_is_cacheable_sig(
                 jl_value_t *declt = jl_tparam(decl, i);
                 // for T..., intersect with T
                 if (jl_is_vararg_type(declt))
-                    declt = jl_tparam0(declt);
+                    declt = jl_unwrap_vararg(declt);
                 jl_value_t *di = jl_type_intersection(declt, (jl_value_t*)jl_typetype_type);
                 assert(di != (jl_value_t*)jl_bottom_type);
                 if (is_kind(di))
@@ -948,12 +949,13 @@ static jl_array_t *check_ambiguous_matches(union jl_typemap_t defs,
                                            jl_typemap_entry_t *newentry)
 {
     jl_tupletype_t *type = newentry->sig;
-    size_t l = jl_svec_len(type->parameters);
+    jl_tupletype_t *ttypes = jl_unwrap_unionall(type);
+    size_t l = jl_nparams(ttypes);
     jl_value_t *va = NULL;
     if (l > 0) {
-        va = jl_tparam(type, l - 1);
+        va = jl_tparam(ttypes, l - 1);
         if (jl_is_vararg_type(va))
-            va = jl_tparam0(va);
+            va = jl_unwrap_vararg(va);
         else
             va = NULL;
     }
@@ -2015,7 +2017,7 @@ static int tvar_exists_at_top_level(jl_value_t *tv, jl_tupletype_t *sig, int att
     for(i=0; i < l; i++) {
         jl_value_t *a = jl_tparam(sig, i);
         if (jl_is_vararg_type(a))
-            a = jl_tparam0(a);
+            a = jl_unwrap_vararg(a);
         if (a == tv)
             return 1;
         if (attop && jl_is_datatype(a)) {
@@ -2187,7 +2189,7 @@ static jl_value_t *ml_matches(union jl_typemap_t defs, int offs,
     if (l > 0) {
         va = jl_tparam(type, l - 1);
         if (jl_is_vararg_type(va))
-            va = jl_tparam0(va);
+            va = jl_unwrap_vararg(va);
         else
             va = NULL;
     }

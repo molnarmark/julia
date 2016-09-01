@@ -396,7 +396,7 @@ JL_DLLEXPORT jl_array_t *jl_alloc_vec_any(size_t n)
     return jl_alloc_array_1d(jl_array_any_type, n);
 }
 
-JL_DLLEXPORT jl_value_t *jl_apply_array_type(jl_datatype_t *type, size_t dim)
+JL_DLLEXPORT jl_value_t *jl_apply_array_type(jl_value_t *type, size_t dim)
 {
     jl_value_t *boxed_dim = jl_box_long(dim);
     JL_GC_PUSH1(&boxed_dim);

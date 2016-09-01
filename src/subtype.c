@@ -177,6 +177,8 @@ static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8
 
 static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e)
 {
+    if (x == jl_ANY_flag) x = jl_any_type;
+    if (y == jl_ANY_flag) y = jl_any_type;
     // take apart unions before handling vars
     if (jl_is_uniontype(y)) {
         if (x == y || x == ((jl_uniontype_t*)y)->a || x == ((jl_uniontype_t*)y)->b)
@@ -247,11 +249,11 @@ static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e)
                 jl_value_t *xi = jl_tparam(xd, i), *yi = jl_tparam(yd, j);
                 if (jl_is_vararg_type(xi)) {
                     vx = 1;
-                    xi = jl_tparam0(xi);
+                    xi = jl_unwrap_vararg(xi);
                 }
                 if (jl_is_vararg_type(yi)) {
                     vy = 1;
-                    yi = jl_tparam0(yi);
+                    yi = jl_unwrap_vararg(yi);
                 }
                 if (!subtype(xi, yi, e))
                     return 0;

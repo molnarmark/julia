@@ -2365,7 +2365,7 @@ static bool emit_builtin_call(jl_cgval_t *ret, jl_value_t *f, jl_value_t **args,
             JL_GC_POP();
             return true;
         }
-        if (jl_is_type_type(ty) && !jl_has_typevars(jl_tparam0(ty))) {
+        if (jl_is_type_type(ty) && !jl_has_free_typevars(jl_tparam0(ty))) {
             jl_value_t *tp0 = jl_tparam0(ty);
             if (jl_subtype(arg, tp0)) {
                 emit_expr(args[1], ctx);  // TODO remove if no side effects
@@ -2788,7 +2788,7 @@ static bool emit_builtin_call(jl_cgval_t *ret, jl_value_t *f, jl_value_t **args,
         if (i > nargs) {
             jl_value_t *ty = static_eval(expr, ctx, true, true);
             if (ty!=NULL && jl_is_leaf_type(ty)) {
-                if (jl_has_typevars(ty)) {
+                if (jl_has_free_typevars(ty)) {
                     // add root for types not cached. issue #7065
                     jl_add_method_root(ctx->linfo, ty);
                 }
@@ -3689,7 +3689,7 @@ static Function *gen_cfun_wrapper(jl_function_t *ff, jl_value_t *jlrettype, jl_t
     // first emit the arguments
     for (size_t i = 0; i < nargs; i++) {
         Value *val = &*AI++;
-        jl_value_t *jargty = jl_nth_slot_type(argt, i);
+        jl_value_t *jargty = jl_nth_slot_type((jl_value_t*)argt, i);
         // figure out how to unpack this type
         jl_cgval_t inputarg;
         if (jl_is_abstract_ref_type(jargty)) {
@@ -4136,7 +4136,7 @@ static std::unique_ptr<Module> emit_function(jl_method_instance_t *lam, jl_code_
         if (jl_is_typevar(e))
             needsparams = true;
     }
-    if (!va && ctx.nargs > 0 && !needsparams && lam->specTypes != jl_anytuple_type && src->inferred) {
+    if (!va && ctx.nargs > 0 && !needsparams && lam->specTypes != (jl_value_t*)jl_anytuple_type && src->inferred) {
         // not vararg, consider specialized signature
         for(size_t i=0; i < jl_nparams(lam->specTypes); i++) {
             if (isbits_spec(jl_tparam(lam->specTypes, i))) { // assumes !va
@@ -5727,8 +5727,8 @@ static void init_julia_llvm_env(Module *m)
     add_named_global(jlegal_func, &jl_egal);
 
     std::vector<Type *> isa_args(0);
-    subt_args.push_back(T_pjlvalue);
-    subt_args.push_back(T_pjlvalue);
+    isa_args.push_back(T_pjlvalue);
+    isa_args.push_back(T_pjlvalue);
     jlisa_func =
         Function::Create(FunctionType::get(T_int32, isa_args, false),
                          Function::ExternalLinkage,

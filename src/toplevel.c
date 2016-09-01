@@ -758,7 +758,7 @@ static jl_datatype_t *first_arg_datatype(jl_value_t *a, int got_tuple1)
         jl_datatype_t *d2 = first_arg_datatype(u->b, got_tuple1);
         if (d2 == NULL || d1->name != d2->name)
             return NULL;
-        return dt;
+        return d1;
     }
     return NULL;
 }

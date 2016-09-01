@@ -600,13 +600,13 @@ static void jl_serialize_datatype(jl_serializer_state *s, jl_datatype_t *dt)
 
     if (has_layout) {
         uint8_t layout = 0;
-        if (dt->layout == jl_array_type->layout) {
+        if (dt->layout == ((jl_datatype_t*)jl_unwrap_unionall(jl_array_type))->layout) {
             layout = 1;
         }
         else if (dt->layout == jl_void_type->layout) {
             layout = 2;
         }
-        else if (dt->layout == jl_pointer_type->layout) {
+        else if (dt->layout == ((jl_datatype_t*)jl_unwrap_unionall(jl_pointer_type))->layout) {
             layout = 3;
         }
         write_uint8(s->s, layout);
@@ -867,7 +867,6 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v)
         jl_serialize_value(s, ((jl_tvar_t*)v)->name);
         jl_serialize_value(s, ((jl_tvar_t*)v)->lb);
         jl_serialize_value(s, ((jl_tvar_t*)v)->ub);
-        write_int8(s->s, ((jl_tvar_t*)v)->bound);
     }
     else if (jl_is_method(v)) {
         writetag(s->s, jl_method_type);
@@ -1042,7 +1041,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v)
             }
             size_t nf = jl_datatype_nfields(t);
             if (nf == 0 && jl_datatype_size(t)>0) {
-                if (t->name == jl_pointer_type->name) {
+                if (t->name == jl_pointer_typename) {
                     write_int32(s->s, 0);
 #ifdef _P64
                     write_int32(s->s, 0);
@@ -1310,13 +1309,13 @@ static jl_value_t *jl_deserialize_datatype(jl_serializer_state *s, int pos, jl_v
     if (has_layout) {
         uint8_t layout = read_uint8(s->s);
         if (layout == 1) {
-            dt->layout = jl_array_type->layout;
+            dt->layout = ((jl_datatype_t*)jl_unwrap_unionall(jl_array_type))->layout;
         }
         else if (layout == 2) {
             dt->layout = jl_void_type->layout;
         }
         else if (layout == 3) {
-            dt->layout = jl_pointer_type->layout;
+            dt->layout = ((jl_datatype_t*)jl_unwrap_unionall(jl_pointer_type))->layout;
         }
         else {
             assert(layout == 0);
@@ -1814,8 +1813,7 @@ static jl_value_t *jl_deserialize_value_(jl_serializer_state *s, jl_value_t *vta
         return jl_deserialize_value_expr(s, vtag);
     }
     else if (vtag == (jl_value_t*)jl_tvar_type) {
-        jl_tvar_t *tv = (jl_tvar_t*)jl_gc_alloc(s->ptls, sizeof(jl_tvar_t),
-                                                jl_tvar_type);
+        jl_tvar_t *tv = (jl_tvar_t*)jl_gc_alloc(s->ptls, sizeof(jl_tvar_t), jl_tvar_type);
         if (usetable)
             arraylist_push(&backref_list, tv);
         tv->name = (jl_sym_t*)jl_deserialize_value(s, NULL);
@@ -1824,7 +1822,6 @@ static jl_value_t *jl_deserialize_value_(jl_serializer_state *s, jl_value_t *vta
         jl_gc_wb(tv, tv->lb);
         tv->ub = jl_deserialize_value(s, &tv->ub);
         jl_gc_wb(tv, tv->ub);
-        tv->bound = read_int8(s->s);
         return (jl_value_t*)tv;
     }
     else if (vtag == (jl_value_t*)jl_method_type) {
@@ -2843,31 +2840,30 @@ void jl_init_serializer(void)
                      jl_box_int64(39), jl_box_int64(40), jl_box_int64(41),
                      jl_box_int64(42), jl_box_int64(43),
 #endif
-                     jl_labelnode_type, jl_linenumbernode_type,
-                     jl_gotonode_type, jl_quotenode_type,
-                     jl_type_type, jl_bottom_type, jl_ref_type, jl_pointer_type,
-                     jl_vararg_type, jl_abstractarray_type,
-                     jl_densearray_type, jl_void_type, jl_function_type,
-                     jl_unionall_type, jl_typename_type, jl_builtin_type, jl_code_info_type,
-                     jl_task_type, jl_uniontype_type, jl_typetype_type, jl_typetype_tvar,
-                     jl_ANY_flag, jl_array_any_type, jl_intrinsic_type, jl_abstractslot_type,
-                     jl_methtable_type, jl_typemap_level_type, jl_typemap_entry_type,
-                     jl_voidpointer_type, jl_newvarnode_type,
+                     jl_labelnode_type, jl_linenumbernode_type, jl_gotonode_type,
+                     jl_quotenode_type, jl_type_type, jl_bottom_type, jl_ref_type,
+                     jl_pointer_type, jl_vararg_type, jl_abstractarray_type, jl_void_type,
+                     jl_densearray_type, jl_function_type, jl_unionall_type, jl_typename_type,
+                     jl_builtin_type, jl_task_type, jl_uniontype_type, jl_typetype_type,
+                     jl_typetype_tvar, jl_ANY_flag, jl_array_any_type, jl_intrinsic_type,
+                     jl_abstractslot_type, jl_methtable_type, jl_typemap_level_type,
+                     jl_typemap_entry_type, jl_voidpointer_type, jl_newvarnode_type,
                      jl_array_symbol_type, jl_anytuple_type, jl_tparam0(jl_anytuple_type),
-                     jl_typeof(jl_emptytuple), jl_array_uint8_type,
-                     jl_symbol_type->name, jl_ssavalue_type->name, jl_tuple_typename,
-                     jl_ref_type->name, jl_pointer_type->name, jl_simplevector_type->name,
-                     jl_datatype_type->name, jl_uniontype_type->name, jl_array_type->name,
-                     jl_expr_type->name, jl_typename_type->name, jl_type_typename,
-                     jl_methtable_type->name, jl_typemap_level_type->name, jl_typemap_entry_type->name, jl_tvar_type->name,
-                     jl_abstractarray_type->name, jl_vararg_typename,
-                     jl_densearray_type->name, jl_void_type->name, jl_method_instance_type->name, jl_method_type->name,
+                     jl_typeof(jl_emptytuple), jl_array_uint8_type, jl_symbol_type->name,
+                     jl_ssavalue_type->name, jl_tuple_typename, jl_code_info_type,
+                     ((jl_datatype_t*)jl_unwrap_unionall(jl_ref_type))->name,
+                     jl_pointer_typename, jl_simplevector_type->name, jl_datatype_type->name,
+                     jl_uniontype_type->name, jl_array_typename, jl_expr_type->name,
+                     jl_typename_type->name, jl_type_typename, jl_methtable_type->name,
+                     jl_typemap_level_type->name, jl_typemap_entry_type->name, jl_tvar_type->name,
+                     ((jl_datatype_t*)jl_unwrap_unionall(jl_abstractarray_type))->name,
+                     ((jl_datatype_t*)jl_unwrap_unionall(jl_densearray_type))->name,
+                     jl_vararg_typename, jl_void_type->name, jl_method_instance_type->name, jl_method_type->name,
                      jl_module_type->name, jl_function_type->name, jl_typedslot_type->name,
-                     jl_abstractslot_type->name, jl_slotnumber_type->name,
-                     jl_unionall_type->name, jl_intrinsic_type->name, jl_task_type->name,
-                     jl_labelnode_type->name, jl_linenumbernode_type->name, jl_builtin_type->name,
-                     jl_gotonode_type->name, jl_quotenode_type->name,
-                     jl_globalref_type->name,
+                     jl_abstractslot_type->name, jl_slotnumber_type->name, jl_unionall_type->name,
+                     jl_intrinsic_type->name, jl_task_type->name, jl_labelnode_type->name,
+                     jl_linenumbernode_type->name, jl_builtin_type->name, jl_gotonode_type->name,
+                     jl_quotenode_type->name, jl_globalref_type->name,
 
                      ptls->root_task,
 

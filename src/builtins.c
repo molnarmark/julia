@@ -1249,7 +1249,7 @@ static size_t jl_static_show_x_(JL_STREAM *out, jl_value_t *v, jl_datatype_t *vt
             n += jl_static_show_x(out, (jl_value_t*)li->def->module, depth);
             if (li->specTypes) {
                 n += jl_printf(out, ".");
-                n += jl_show_svec(out, li->specTypes->parameters,
+                n += jl_show_svec(out, ((jl_datatype_t*)jl_unwrap_unionall(li->specTypes))->parameters,
                                   jl_symbol_name(li->def->name), "(", ")");
             }
             else {
@@ -1340,20 +1340,26 @@ static size_t jl_static_show_x_(JL_STREAM *out, jl_value_t *v, jl_datatype_t *vt
         n += jl_printf(out, "\"%s\"", jl_iostr_data(v));
     }
     else if (vt == jl_uniontype_type) {
-        n += jl_show_svec(out, ((jl_uniontype_t*)v)->types, "Union", "{", "}");
+        n += jl_printf(out, "Union{");
+        while (jl_is_uniontype(v)) {
+            n += jl_static_show_x(out, ((jl_uniontype_t*)v)->a, depth);
+            n += jl_printf(out, ", ");
+            v = ((jl_uniontype_t*)v)->b;
+        }
+        n += jl_static_show_x(out, v, depth);
+        n += jl_printf(out, "}");
     }
     else if (vt == jl_unionall_type) {
         n += jl_static_show_x(out, ((jl_unionall_t*)v)->body, depth);
         n += jl_printf(out, " where ");
-        n += jl_static_show_x(out, ((jl_unionall_t*)v)->var, depth);
+        n += jl_static_show_x(out, (jl_value_t*)((jl_unionall_t*)v)->var, depth);
     }
     else if (vt == jl_tvar_type) {
         if (((jl_tvar_t*)v)->lb != jl_bottom_type) {
             n += jl_static_show(out, ((jl_tvar_t*)v)->lb);
             n += jl_printf(out, "<:");
         }
-        n += jl_printf(out, "%s%s<:", (((jl_tvar_t*)v)->bound)?"#":"",
-                       jl_symbol_name(((jl_tvar_t*)v)->name));
+        n += jl_printf(out, "%s<:", jl_symbol_name(((jl_tvar_t*)v)->name));
         n += jl_static_show(out, ((jl_tvar_t*)v)->ub);
     }
     else if (vt == jl_module_type) {
@@ -1557,6 +1563,7 @@ JL_DLLEXPORT size_t jl_static_show_func_sig(JL_STREAM *s, jl_value_t *type)
         n += jl_static_show(s, ftype);
         n += jl_printf(s, ")");
     }
+    type = jl_unwrap_unionall(type);
     size_t tl = jl_nparams(type);
     n += jl_printf(s, "(");
     size_t i;
@@ -1568,7 +1575,7 @@ JL_DLLEXPORT size_t jl_static_show_func_sig(JL_STREAM *s, jl_value_t *type)
         }
         else {
             if (jl_is_vararg_type(tp)) {
-                n += jl_static_show(s, jl_tparam0(tp));
+                n += jl_static_show(s, jl_unwrap_vararg(tp));
                 n += jl_printf(s, "...");
             }
             else {

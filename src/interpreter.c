@@ -380,12 +380,6 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
         jl_value_t *w = NULL;
         JL_GC_PUSH4(&para, &super, &temp, &w);
         temp = eval(args[2], s);  // field names
-#ifndef NDEBUG
-        size_t i, l = jl_svec_len(para);
-        for (i = 0; i < l; i++) {
-            assert(!((jl_tvar_t*)jl_svecref(para, i))->bound);
-        }
-#endif
         dt = jl_new_datatype((jl_sym_t*)name, NULL, (jl_svec_t*)para,
                              (jl_svec_t*)temp, NULL,
                              0, args[5]==jl_true ? 1 : 0, jl_unbox_long(args[6]));
