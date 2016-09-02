@@ -666,11 +666,16 @@ void _julia_init(JL_IMAGE_SEARCH rel)
     for(i=1; i < jl_core_module->bindings.size; i+=2) {
         if (table[i] != HT_NOTFOUND) {
             jl_binding_t *b = (jl_binding_t*)table[i];
-            if (b->value && jl_is_datatype(b->value)) {
-                jl_datatype_t *tt = (jl_datatype_t*)b->value;
-                tt->name->module = jl_core_module;
-                if (tt->name->mt)
-                    tt->name->mt->module = jl_core_module;
+            jl_value_t *v = b->value;
+            if (v) {
+                if (jl_is_unionall(v))
+                    v = jl_unwrap_unionall(v);
+                if (jl_is_datatype(v)) {
+                    jl_datatype_t *tt = (jl_datatype_t*)v;
+                    tt->name->module = jl_core_module;
+                    if (tt->name->mt)
+                        tt->name->mt->module = jl_core_module;
+                }
             }
         }
     }

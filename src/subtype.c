@@ -135,9 +135,31 @@ static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e)
     return 1;
 }
 
+static int obviously_egal(jl_value_t *a, jl_value_t *b)
+{
+    if (a == b) return 1;
+    if (jl_typeof(a) != jl_typeof(b)) return 0;
+    if (jl_is_datatype(a)) {
+        jl_datatype_t *ad = (jl_datatype_t*)a, *bd = (jl_datatype_t*)b;
+        if (ad->name != bd->name) return 0;
+        size_t i, np = jl_nparams(ad);
+        if (np != jl_nparams(bd)) return 0;
+        for(i=0; i < np; i++) {
+            if (!obviously_egal(jl_tparam(ad,i), jl_tparam(bd,i)))
+                return 0;
+        }
+        return 1;
+    }
+    if (jl_is_uniontype(a)) {
+        return obviously_egal(((jl_uniontype_t*)a)->a, ((jl_uniontype_t*)b)->a) &&
+            obviously_egal(((jl_uniontype_t*)a)->b, ((jl_uniontype_t*)b)->b);
+    }
+    return !jl_is_type(a) && jl_egal(a,b);
+}
+
 static jl_value_t *simple_join(jl_value_t *a, jl_value_t *b)
 {
-    if (a == jl_bottom_type || b == (jl_value_t*)jl_any_type || a == b)
+    if (a == jl_bottom_type || b == (jl_value_t*)jl_any_type || obviously_egal(a,b))
         return b;
     if (b == jl_bottom_type || a == (jl_value_t*)jl_any_type)
         return a;
@@ -171,6 +193,29 @@ static jl_unionall_t *rename_unionall(jl_unionall_t *u)
     return (jl_unionall_t*)t;
 }
 
+static int is_leaf_bound(jl_value_t *v)
+{
+    if (v == jl_bottom_type) return 1;
+    if (jl_is_datatype(v)) {
+        if (((jl_datatype_t*)v)->isleaftype) return 1;
+        if (((jl_datatype_t*)v)->abstract) {
+            if (jl_is_type_type(v))
+                return 1;//!jl_has_free_typevars(jl_tparam0(v));
+            return 0;
+        }
+        jl_svec_t *t = ((jl_datatype_t*)v)->parameters;
+        size_t l = jl_svec_len(t);
+        if (((jl_datatype_t*)v)->name == jl_tuple_typename) {
+            for(int i=0; i < l; i++) {
+                if (!is_leaf_bound(jl_svecref(t,i)))
+                    return 0;
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8_t R)
 {
     jl_varbinding_t *btemp = e->vars;
@@ -196,7 +241,11 @@ static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8
         if (e->envidx < e->envsz) {
             jl_value_t *val;
             if (vb.lb == vb.ub)
-                val = vb.ub;
+                val = vb.lb;
+            else if (vb.lb != jl_bottom_type)
+                // TODO: for now return the least solution, which is what
+                // method parameters expect.
+                val = vb.lb;
             else if (vb.lb == u->var->lb && vb.ub == u->var->ub)
                 val = (jl_value_t*)u->var;
             else
@@ -222,7 +271,7 @@ static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8
             else  // TODO ???
                 ans = (v == vb.concretevar);
         }
-        else if (!(vb.lb == jl_bottom_type || jl_is_leaf_type(vb.lb))) {
+        else if (!is_leaf_bound(vb.lb)) {
             ans = 0;
         }
         if (ans) {
@@ -357,6 +406,13 @@ static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e)
         if (x == y) return 1;
         if (y == (jl_value_t*)jl_any_type) return 1;
         jl_datatype_t *xd = (jl_datatype_t*)x, *yd = (jl_datatype_t*)y;
+        if (jl_is_type_type(xd) && !jl_is_typevar(jl_tparam0(xd)) && jl_typeof(jl_tparam0(xd)) == yd)
+            // TODO this is not strictly correct, but we don't yet have any other way for
+            // e.g. the argument `Int` to match a `::DataType` slot. Most correct would be:
+            // Int isa DataType, Int isa Type{Int}, Type{Int} more specific than DataType,
+            // !(Type{Int} <: DataType), !isleaftype(Type{Int}), because non-DataTypes can
+            // be type-equal to `Int`.
+            return 1;
         while (xd != jl_any_type && xd->name != yd->name)
             xd = xd->super;
         if (xd == (jl_value_t*)jl_any_type) return 0;
@@ -473,7 +529,14 @@ JL_DLLEXPORT int jl_subtype(jl_value_t *x, jl_value_t *y)
     return jl_subtype_env(x, y, NULL, 0);
 }
 
-int jl_tuple_subtype(jl_value_t **child, size_t cl, jl_datatype_t *pdt, int ta)
+JL_DLLEXPORT int jl_types_equal(jl_value_t *a, jl_value_t *b)
+{
+    if (obviously_egal(a, b))
+        return 1;
+    return jl_subtype(a, b) && jl_subtype(b, a);
+}
+
+int jl_tuple_isa(jl_value_t **child, size_t cl, jl_datatype_t *pdt)
 {
     // TODO jb/subtype avoid allocation
     jl_value_t *tu = arg_type_tuple(child, cl);

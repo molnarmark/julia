@@ -355,6 +355,11 @@ JL_CALLABLE(jl_f_sizeof)
 {
     JL_NARGS(sizeof, 1, 1);
     jl_value_t *x = args[0];
+    if (jl_is_unionall(x)) {
+        x = jl_unwrap_unionall(x);
+        if (!jl_is_datatype(x))
+            jl_error("argument is an abstract type; size is indeterminate");
+    }
     if (jl_is_datatype(x)) {
         jl_datatype_t *dx = (jl_datatype_t*)x;
         if (dx->name == jl_array_typename || dx == jl_symbol_type || dx == jl_simplevector_type)
@@ -382,9 +387,12 @@ JL_CALLABLE(jl_f_sizeof)
 JL_CALLABLE(jl_f_issubtype)
 {
     JL_NARGS(issubtype, 2, 2);
-    JL_TYPECHK(issubtype, type, args[0]);
-    JL_TYPECHK(issubtype, type, args[1]);
-    return (jl_subtype(args[0],args[1]) ? jl_true : jl_false);
+    jl_value_t *a = args[0], *b = args[1];
+    if (jl_is_typevar(a)) a = ((jl_tvar_t*)a)->ub; // TODO should we still allow this?
+    if (jl_is_typevar(b)) b = ((jl_tvar_t*)b)->ub;
+    JL_TYPECHK(issubtype, type, a);
+    JL_TYPECHK(issubtype, type, b);
+    return (jl_subtype(a,b) ? jl_true : jl_false);
 }
 
 JL_CALLABLE(jl_f_isa)
@@ -995,7 +1003,7 @@ JL_CALLABLE(jl_f_invoke)
     else {
         jl_check_type_tuple(args[1], jl_gf_name(args[0]), "invoke");
     }
-    if (!jl_tuple_subtype(&args[2], nargs-2, (jl_datatype_t*)argtypes, 1))
+    if (!jl_tuple_isa(&args[2], nargs-2, (jl_datatype_t*)argtypes))
         jl_error("invoke: argument type error");
     args[1] = args[0];  // move function directly in front of arguments
     jl_value_t *res = jl_gf_invoke((jl_tupletype_t*)argtypes, &args[1], nargs-1);
@@ -1153,6 +1161,7 @@ void jl_init_primitives(void)
     add_builtin("TypeVar", (jl_value_t*)jl_tvar_type);
     add_builtin("UnionAll", (jl_value_t*)jl_unionall_type);
     add_builtin("Union", (jl_value_t*)jl_uniontype_type);
+    add_builtin("BottomType", (jl_value_t*)jl_bottomtype_type);
     add_builtin("Tuple", (jl_value_t*)jl_anytuple_type);
     add_builtin("Vararg", (jl_value_t*)jl_vararg_type);
     add_builtin("SimpleVector", (jl_value_t*)jl_simplevector_type);

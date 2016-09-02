@@ -1117,10 +1117,20 @@ STATIC_INLINE jl_vararg_kind_t jl_vararg_kind(jl_value_t *v)
 {
     if (!jl_is_vararg_type(v))
         return JL_VARARG_NONE;
-    jl_value_t *lenv = jl_tparam1(jl_unwrap_unionall(v));
+    jl_tvar_t *v1=NULL, *v2=NULL;
+    if (jl_is_unionall(v)) {
+        v1 = ((jl_unionall_t*)v)->var;
+        v = ((jl_unionall_t*)v)->body;
+        if (jl_is_unionall(v)) {
+            v2 = ((jl_unionall_t*)v)->var;
+            v = ((jl_unionall_t*)v)->body;
+        }
+    }
+    assert(jl_is_datatype(v));
+    jl_value_t *lenv = jl_tparam1(v);
     if (jl_is_long(lenv))
         return JL_VARARG_INT;
-    if (jl_is_typevar(lenv))
+    if (jl_is_typevar(lenv) && lenv != (jl_value_t*)v1 && lenv != (jl_value_t*)v2)
         return JL_VARARG_BOUND;
     return JL_VARARG_UNBOUND;
 }
@@ -1134,6 +1144,7 @@ STATIC_INLINE int jl_is_va_tuple(jl_datatype_t *t)
 
 STATIC_INLINE jl_vararg_kind_t jl_va_tuple_kind(jl_datatype_t *t)
 {
+    t = (jl_datatype_t*)jl_unwrap_unionall((jl_value_t*)t);
     assert(jl_is_tuple_type(t));
     size_t l = jl_svec_len(t->parameters);
     if (l == 0)

@@ -69,9 +69,24 @@ function tuple_type_cons{S,T<:Tuple}(::Type{S}, ::Type{T})
     Tuple{S, T.parameters...}
 end
 
-isvarargtype(t::ANY) = isa(t, DataType) && (t::DataType).name === Vararg.name
+function unwrap_unionall(a::ANY)
+    while isa(a,UnionAll)
+        a = a.body
+    end
+    return a
+end
+
+const _va_typename = Vararg.body.body.name
+function isvarargtype(t::ANY)
+    t = unwrap_unionall(t)
+    isa(t, DataType) && (t::DataType).name === _va_typename
+end
+
 isvatuple(t::DataType) = (n = length(t.parameters); n > 0 && isvarargtype(t.parameters[n]))
-unwrapva(t::ANY) = isvarargtype(t) ? t.parameters[1] : t
+function unwrapva(t::ANY)
+    t = unwrap_unionall(t)
+    isvarargtype(t) ? t.parameters[1] : t
+end
 
 convert{T<:Tuple{Any,Vararg{Any}}}(::Type{T}, x::Tuple{Any, Vararg{Any}}) =
     tuple(convert(tuple_type_head(T),x[1]), convert(tuple_type_tail(T), tail(x))...)

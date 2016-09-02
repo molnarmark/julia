@@ -127,7 +127,7 @@ typedef struct {
 } jl_serializer_state;
 
 static jl_value_t *jl_idtable_type = NULL;
-static arraylist_t builtin_types;
+static arraylist_t builtin_typenames;
 
 #define write_uint8(s, n) ios_putc((n), (s))
 #define read_uint8(s) ((uint8_t)ios_getc(s))
@@ -2159,9 +2159,9 @@ static void jl_save_system_image_to_stream(ios_t *f)
     jl_prune_type_cache(jl_type_typename->cache);
 
     intptr_t i;
-    for (i = 0; i < builtin_types.len; i++) {
-        jl_serialize_value(&s, ((jl_datatype_t*)builtin_types.items[i])->name->cache);
-        jl_serialize_value(&s, ((jl_datatype_t*)builtin_types.items[i])->name->linearcache);
+    for (i = 0; i < builtin_typenames.len; i++) {
+        jl_serialize_value(&s, ((jl_typename_t*)builtin_typenames.items[i])->cache);
+        jl_serialize_value(&s, ((jl_typename_t*)builtin_typenames.items[i])->linearcache);
     }
 
     // ensure everything in deser_tag is reassociated with its GlobalValue
@@ -2262,8 +2262,8 @@ static void jl_restore_system_image_from_stream(ios_t *f)
     jl_module_type->name->mt = (jl_methtable_t*)jl_deserialize_value(&s, NULL);
 
     intptr_t i;
-    for(i=0; i < builtin_types.len; i++) {
-        jl_typename_t *tn = ((jl_datatype_t*)builtin_types.items[i])->name;
+    for(i=0; i < builtin_typenames.len; i++) {
+        jl_typename_t *tn = (jl_typename_t*)builtin_typenames.items[i];
         tn->cache = (jl_svec_t*)jl_deserialize_value(&s, NULL); jl_gc_wb(tn, tn->cache);
         tn->linearcache = (jl_svec_t*)jl_deserialize_value(&s, NULL); jl_gc_wb(tn, tn->linearcache);
         jl_resort_type_cache(tn->cache);
@@ -2821,7 +2821,6 @@ void jl_init_serializer(void)
                      jl_box_int32(33), jl_box_int32(34), jl_box_int32(35),
                      jl_box_int32(36), jl_box_int32(37), jl_box_int32(38),
                      jl_box_int32(39), jl_box_int32(40), jl_box_int32(41),
-                     jl_box_int32(42), jl_box_int32(43),
 #endif
                      jl_box_int64(0), jl_box_int64(1), jl_box_int64(2),
                      jl_box_int64(3), jl_box_int64(4), jl_box_int64(5),
@@ -2838,7 +2837,6 @@ void jl_init_serializer(void)
                      jl_box_int64(33), jl_box_int64(34), jl_box_int64(35),
                      jl_box_int64(36), jl_box_int64(37), jl_box_int64(38),
                      jl_box_int64(39), jl_box_int64(40), jl_box_int64(41),
-                     jl_box_int64(42), jl_box_int64(43),
 #endif
                      jl_labelnode_type, jl_linenumbernode_type, jl_gotonode_type,
                      jl_quotenode_type, jl_type_type, jl_bottom_type, jl_ref_type,
@@ -2850,7 +2848,7 @@ void jl_init_serializer(void)
                      jl_typemap_entry_type, jl_voidpointer_type, jl_newvarnode_type,
                      jl_array_symbol_type, jl_anytuple_type, jl_tparam0(jl_anytuple_type),
                      jl_typeof(jl_emptytuple), jl_array_uint8_type, jl_symbol_type->name,
-                     jl_ssavalue_type->name, jl_tuple_typename, jl_code_info_type,
+                     jl_ssavalue_type->name, jl_tuple_typename, jl_code_info_type, jl_bottomtype_type,
                      ((jl_datatype_t*)jl_unwrap_unionall(jl_ref_type))->name,
                      jl_pointer_typename, jl_simplevector_type->name, jl_datatype_type->name,
                      jl_uniontype_type->name, jl_array_typename, jl_expr_type->name,
@@ -2863,7 +2861,7 @@ void jl_init_serializer(void)
                      jl_abstractslot_type->name, jl_slotnumber_type->name, jl_unionall_type->name,
                      jl_intrinsic_type->name, jl_task_type->name, jl_labelnode_type->name,
                      jl_linenumbernode_type->name, jl_builtin_type->name, jl_gotonode_type->name,
-                     jl_quotenode_type->name, jl_globalref_type->name,
+                     jl_quotenode_type->name, jl_globalref_type->name, jl_bottomtype_type->name,
 
                      ptls->root_task,
 
@@ -2898,15 +2896,15 @@ void jl_init_serializer(void)
     }
     assert(i <= 256);
 
-    arraylist_new(&builtin_types, 0);
-    arraylist_push(&builtin_types, jl_array_type);
-    arraylist_push(&builtin_types, jl_ref_type);
-    arraylist_push(&builtin_types, jl_pointer_type);
-    arraylist_push(&builtin_types, jl_type_type);
-    arraylist_push(&builtin_types, jl_abstractarray_type);
-    arraylist_push(&builtin_types, jl_densearray_type);
-    arraylist_push(&builtin_types, jl_tuple_type);
-    arraylist_push(&builtin_types, jl_vararg_type);
+    arraylist_new(&builtin_typenames, 0);
+    arraylist_push(&builtin_typenames, jl_array_typename);
+    arraylist_push(&builtin_typenames, ((jl_datatype_t*)jl_ref_type->body)->name);
+    arraylist_push(&builtin_typenames, jl_pointer_typename);
+    arraylist_push(&builtin_typenames, jl_type_typename);
+    arraylist_push(&builtin_typenames, ((jl_datatype_t*)jl_unwrap_unionall(jl_abstractarray_type))->name);
+    arraylist_push(&builtin_typenames, ((jl_datatype_t*)jl_unwrap_unionall(jl_densearray_type))->name);
+    arraylist_push(&builtin_typenames, jl_tuple_typename);
+    arraylist_push(&builtin_typenames, jl_vararg_typename);
 }
 
 #ifdef __cplusplus

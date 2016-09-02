@@ -341,7 +341,8 @@
                            ,body ,isstaged)
                   `(method ,name
                            (block
-                            ,@(map make-assignment temps (symbols->typevars names bounds))
+                            ,@(map (lambda (l r) (make-assignment l (replace-vars r renames)))
+                                   temps (symbols->typevars names bounds))
                             (call (core svec) (call (core svec)
                                                     ,@(dots->vararg
                                                        (map (lambda (ty)

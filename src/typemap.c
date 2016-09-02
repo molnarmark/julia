@@ -257,7 +257,7 @@ union jl_typemap_t mtcache_hash_lookup(const struct jl_ordereddict_t *a, jl_valu
         }
         else {
             assert(jl_typeof(ml.unknown) == (jl_value_t*)jl_typemap_entry_type);
-            t = jl_field_type(ml.leaf->sig, offs);
+            t = jl_field_type(jl_unwrap_unionall(ml.leaf->sig), offs);
             if (tparam)
                 t = jl_tparam0(t);
         }
@@ -282,7 +282,7 @@ static void mtcache_rehash(struct jl_ordereddict_t *pa, size_t newlen, jl_value_
         }
         else {
             assert(jl_typeof(ml.unknown) == (jl_value_t*)jl_typemap_entry_type);
-            t = jl_field_type(ml.leaf->sig, offs);
+            t = jl_field_type(jl_unwrap_unionall(ml.leaf->sig), offs);
             if (tparam)
                 t = jl_tparam0(t);
         }
@@ -360,7 +360,7 @@ static union jl_typemap_t *mtcache_hash_bp(struct jl_ordereddict_t *pa, jl_value
             }
             else {
                 assert(jl_typeof(pml->unknown) == (jl_value_t*)jl_typemap_entry_type);
-                t = jl_field_type(pml->leaf->sig, offs);
+                t = jl_field_type(jl_unwrap_unionall(pml->leaf->sig), offs);
                 if (tparam)
                     t = jl_tparam0(t);
             }
@@ -464,7 +464,7 @@ static int jl_typemap_intersection_array_visitor(struct jl_ordereddict_t *a, jl_
             t = ml.node->key;
         }
         else {
-            t = jl_field_type(ml.leaf->sig, offs);
+            t = jl_field_type(jl_unwrap_unionall(ml.leaf->sig), offs);
             if (tparam)
                 t = jl_tparam0(t);
         }
@@ -472,10 +472,8 @@ static int jl_typemap_intersection_array_visitor(struct jl_ordereddict_t *a, jl_
             (tparam ?  // need to compute `ty <: Type{t}`
              (jl_is_uniontype(ty) || // punt on Union{...} right now
               jl_typeof(t) == ty || // deal with kinds (e.g. ty == DataType && t == Type{t})
-              (jl_is_type_type(ty) && (jl_is_typevar(jl_tparam0(ty)) ?
-                                       jl_subtype(t, ((jl_tvar_t*)jl_tparam0(ty))->ub) : // deal with ty == Type{<:T}
-                                       jl_subtype(t, jl_tparam0(ty))))) // deal with ty == Type{T{#<:T}}
-                    : jl_subtype(t, ty))) // `t` is a leaftype, so intersection test becomes subtype
+              jl_isa(t, ty)) // deal with ty == Type{T}
+             : jl_subtype(t, ty))) // `t` is a leaftype, so intersection test becomes subtype
             if (!jl_typemap_intersection_visitor(ml, offs+1, closure))
                 return 0;
     }
@@ -552,8 +550,8 @@ int jl_typemap_intersection_visitor(union jl_typemap_t map, int offs,
                 else {
                     // else an array scan is required to check subtypes
                     // first, fast-path: optimized pre-intersection test to see if `ty` could intersect with any Type
-                    if (typetype || jl_type_intersection((jl_value_t*)jl_type_type, ty) != jl_bottom_type)
-                        if (!jl_typemap_intersection_array_visitor(&cache->targ, ty, 1, offs, closure)) return 0;
+                    //if (typetype || jl_type_intersection((jl_value_t*)jl_type_type, ty) != jl_bottom_type)
+                    if (!jl_typemap_intersection_array_visitor(&cache->targ, ty, 1, offs, closure)) return 0;
                 }
             }
             if (cache->arg1.values != (void*)jl_nothing) {
@@ -623,11 +621,8 @@ static jl_typemap_entry_t *jl_typemap_assoc_by_type_(jl_typemap_entry_t *ml, jl_
             else if (ml->issimplesig && !typesisva)
                 ismatch = sig_match_by_type_simple(jl_svec_data(types->parameters), n,
                                                    ml->sig, lensig, ml->va);
-            else if (ml->tvars == jl_emptysvec)
-                ismatch = jl_tuple_subtype(jl_svec_data(types->parameters), n, ml->sig, 0);
-            else if (penv == NULL) {
+            else if (ml->tvars == jl_emptysvec || penv == NULL)
                 ismatch = jl_subtype((jl_value_t*)types, (jl_value_t*)ml->sig);
-            }
             else {
                 // TODO: this is missing the actual subtype test,
                 // which works currently because types is typically a leaf tt,
@@ -824,7 +819,7 @@ jl_typemap_entry_t *jl_typemap_entry_assoc_exact(jl_typemap_entry_t *ml, jl_valu
                     goto nomatch;
             }
             else {
-                if (!jl_tuple_subtype(args, n, ml->sig, 1))
+                if (!jl_tuple_isa(args, n, ml->sig))
                     goto nomatch;
             }
 
@@ -834,7 +829,7 @@ jl_typemap_entry_t *jl_typemap_entry_assoc_exact(jl_typemap_entry_t *ml, jl_valu
                     // checking guard entries require a more
                     // expensive subtype check, since guard entries added for ANY might be
                     // abstract. this fixed issue #12967.
-                    if (jl_tuple_subtype(args, n, (jl_tupletype_t*)jl_svecref(ml->guardsigs, i), 1)) {
+                    if (jl_tuple_isa(args, n, (jl_tupletype_t*)jl_svecref(ml->guardsigs, i))) {
                         goto nomatch;
                     }
                 }

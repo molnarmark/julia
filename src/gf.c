@@ -393,6 +393,7 @@ static void jl_cacheable_sig(
     int *const makesimplesig)
 {
     int8_t isstaged = definition->isstaged;
+    assert(jl_is_tuple_type(type));
     size_t i, np = jl_nparams(type);
     for (i = 0; i < np; i++) {
         jl_value_t *elt = jl_tparam(type, i);
@@ -450,8 +451,8 @@ static void jl_cacheable_sig(
               this can be determined using a type intersection.
             */
             if (!*newparams) *newparams = jl_svec_copy(type->parameters);
-            if (i < jl_nparams(decl)) {
-                jl_value_t *declt = jl_tparam(decl, i);
+            if (decl_i) {
+                jl_value_t *declt = decl_i;
                 // for T..., intersect with T
                 if (jl_is_vararg_type(declt))
                     declt = jl_unwrap_vararg(declt);
@@ -679,7 +680,8 @@ static jl_method_instance_t *cache_method(jl_methtable_t *mt, union jl_typemap_t
             jl_svecset(limited, i, jl_wrap_vararg(lasttype, (jl_value_t*)NULL));
         }
         else {
-            jl_value_t *lastdeclt = jl_tparam(decl, jl_nparams(decl) - 1);
+            jl_value_t *unw = jl_unwrap_unionall(decl);
+            jl_value_t *lastdeclt = jl_tparam(unw, jl_nparams(unw) - 1);
             int nsp = jl_svec_len(sparams);
             if (nsp > 0) {
                 jl_svec_t *env = jl_alloc_svec_uninit(2 * nsp);
@@ -1220,7 +1222,7 @@ jl_llvm_functions_t jl_compile_for_dispatch(jl_method_instance_t *li)
     if (li->jlcall_api == 2)
         return li->functionObjectsDecls;
     if (jl_options.compile_enabled == JL_OPTIONS_COMPILE_OFF ||
-            jl_options.compile_enabled == JL_OPTIONS_COMPILE_MIN) {
+        jl_options.compile_enabled == JL_OPTIONS_COMPILE_MIN) {
         // copy fptr from the template method definition
         jl_method_t *def = li->def;
         if (def && !def->isstaged && def->unspecialized) {
@@ -1694,15 +1696,14 @@ void jl_precompile(int all) {
     jl_compile_specializations();
 }
 
-//
-
 #ifdef JL_TRACE
 static int trace_en = 0;
 static int error_en = 1;
 static void __attribute__ ((unused)) enable_trace(int x) { trace_en=x; }
 static void show_call(jl_value_t *F, jl_value_t **args, uint32_t nargs)
 {
-    jl_printf(JL_STDOUT, "%s(",  jl_symbol_name(jl_gf_name(F)));
+    jl_static_show(JL_STDOUT, F);
+    jl_printf(JL_STDOUT, "(");
     for(size_t i=0; i < nargs; i++) {
         if (i > 0) jl_printf(JL_STDOUT, ", ");
         jl_static_show(JL_STDOUT, jl_typeof(args[i]));
@@ -1855,7 +1856,7 @@ JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
         if (mfunc == NULL) {
 #ifdef JL_TRACE
             if (error_en)
-                show_call(F, args, nargs);
+                show_call(args[0], args, nargs);
 #endif
             jl_method_error((jl_function_t*)args[0], args, nargs);
             // unreachable
@@ -1864,7 +1865,7 @@ JL_DLLEXPORT jl_value_t *jl_apply_generic(jl_value_t **args, uint32_t nargs)
 
 #ifdef JL_TRACE
     if (traceen)
-        jl_printf(JL_STDOUT, " at %s:%d\n", jl_symbol_name(mfunc->file), mfunc->line);
+        jl_printf(JL_STDOUT, " at %s:%d\n", jl_symbol_name(mfunc->def->file), mfunc->def->line);
 #endif
     jl_value_t *res = jl_call_method_internal(mfunc, args, nargs);
     return verify_type(res);
@@ -2013,6 +2014,7 @@ JL_DLLEXPORT jl_svec_t *jl_match_method(jl_value_t *type, jl_value_t *sig,
 // arguments.
 static int tvar_exists_at_top_level(jl_value_t *tv, jl_tupletype_t *sig, int attop)
 {
+    sig = jl_unwrap_unionall(sig);
     int i, l=jl_nparams(sig);
     for(i=0; i < l; i++) {
         jl_value_t *a = jl_tparam(sig, i);
