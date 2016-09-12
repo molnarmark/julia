@@ -344,7 +344,7 @@ function _collect(cont, itr, ::HasEltype, isz::SizeUnknown)
     return a
 end
 
-if isdefined(Core, :Inference)
+if false && isdefined(Core, :Inference)
     _default_eltype(itrt::ANY) = Core.Inference.return_type(first, Tuple{itrt})
 else
     _default_eltype(itr::ANY) = Any

@@ -222,7 +222,7 @@ minmax(x::Real, y::Real) = minmax(promote(x, y)...)
 
 # "Promotion" that takes a function into account. These are meant to be
 # used mainly by broadcast methods, so it is advised against overriding them
-if isdefined(Core, :Inference)
+if false && isdefined(Core, :Inference)
     function _promote_op(op, T::ANY)
         G = Tuple{Generator{Tuple{T},typeof(op)}}
         return Core.Inference.return_type(first, G)

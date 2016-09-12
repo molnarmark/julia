@@ -326,56 +326,56 @@ include("statistics.jl")
 include("irrationals.jl")
 
 # signal processing
-include("dft.jl")
-importall .DFT
-include("dsp.jl")
-importall .DSP
+#include("dft.jl")
+#importall .DFT
+#include("dsp.jl")
+#importall .DSP
 
 # Numerical integration
-include("quadgk.jl")
-importall .QuadGK
+#include("quadgk.jl")
+#importall .QuadGK
 
 # Fast math
-include("fastmath.jl")
-importall .FastMath
+#include("fastmath.jl")
+#importall .FastMath
 
 # libgit2 support
-include("libgit2/libgit2.jl")
+#include("libgit2/libgit2.jl")
 
 # package manager
-include("pkg/pkg.jl")
+#include("pkg/pkg.jl")
 
 # Stack frames and traces
 include("stacktraces.jl")
 importall .StackTraces
 
 # profiler
-include("profile.jl")
-importall .Profile
+#include("profile.jl")
+#importall .Profile
 
 # dates
-include("dates/Dates.jl")
-import .Dates: Date, DateTime, now
+#include("dates/Dates.jl")
+#import .Dates: Date, DateTime, now
 
 # sparse matrices, vectors, and sparse linear algebra
-include("sparse/sparse.jl")
-importall .SparseArrays
+#include("sparse/sparse.jl")
+#importall .SparseArrays
 
 # worker threads
 include("threadcall.jl")
 
 # deprecated functions
-include("deprecated.jl")
+#include("deprecated.jl")
 
 # Some basic documentation
-include("docs/helpdb.jl")
-include("docs/basedocs.jl")
+#include("docs/helpdb.jl")
+#include("docs/basedocs.jl")
 
 # Documentation -- should always be included last in sysimg.
 include("markdown/Markdown.jl")
 include("docs/Docs.jl")
 using .Docs, .Markdown
-isdefined(Core, :Inference) && Docs.loaddocs(Core.Inference.CoreDocs.DOCS)
+#isdefined(Core, :Inference) && Docs.loaddocs(Core.Inference.CoreDocs.DOCS)
 
 function __init__()
     # Base library init
@@ -388,7 +388,7 @@ function __init__()
 end
 
 INCLUDE_STATE = 3 # include = include_from_node1
-include("precompile.jl")
+#include("precompile.jl")
 
 end # baremodule Base
 

@@ -4033,7 +4033,7 @@ let fs = Any[typeinf_ext, typeinf_loop, typeinf_edge, occurs_outside_getfield, e
                     typ[i] = typ[i].ub
                 end
             end
-            typeinf_type(m[3], Tuple{typ...}, m[2], true, InferenceParams())
+            #typeinf_type(m[3], Tuple{typ...}, m[2], true, InferenceParams())
         end
     end
 end
