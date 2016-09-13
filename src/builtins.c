@@ -1364,12 +1364,17 @@ static size_t jl_static_show_x_(JL_STREAM *out, jl_value_t *v, jl_datatype_t *vt
         n += jl_static_show_x(out, (jl_value_t*)((jl_unionall_t*)v)->var, depth);
     }
     else if (vt == jl_tvar_type) {
-        if (((jl_tvar_t*)v)->lb != jl_bottom_type) {
-            n += jl_static_show(out, ((jl_tvar_t*)v)->lb);
+        jl_value_t *lb = ((jl_tvar_t*)v)->lb, *ub = ((jl_tvar_t*)v)->ub;
+        if (lb != jl_bottom_type) {
+            if (jl_is_unionall(lb)) n += jl_printf(out, "(");
+            n += jl_static_show(out, lb);
+            if (jl_is_unionall(lb)) n += jl_printf(out, ")");
             n += jl_printf(out, "<:");
         }
         n += jl_printf(out, "%s<:", jl_symbol_name(((jl_tvar_t*)v)->name));
-        n += jl_static_show(out, ((jl_tvar_t*)v)->ub);
+        if (jl_is_unionall(ub)) n += jl_printf(out, "(");
+        n += jl_static_show(out, ub);
+        if (jl_is_unionall(ub)) n += jl_printf(out, ")");
     }
     else if (vt == jl_module_type) {
         jl_module_t *m = (jl_module_t*)v;

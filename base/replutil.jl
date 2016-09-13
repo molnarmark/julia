@@ -423,8 +423,9 @@ function show_method_candidates(io::IO, ex::MethodError, kwargs::Vector=Any[])
     for (func,arg_types_param) in funcs
         for method in methods(func)
             buf = IOBuffer()
-            s1 = method.sig.parameters[1]
-            sig = method.sig.parameters[2:end]
+            sig0 = unwrap_unionall(method.sig)
+            s1 = sig0.parameters[1]
+            sig = sig0.parameters[2:end]
             print(buf, "  ")
             if !isa(func, s1)
                 # function itself doesn't match
