@@ -831,3 +831,7 @@ begin
 end"""))
     @test !any(x->(x == Expr(:meta, :push_loc, :none)), ex.args)
 end
+
+# issue #18754: parse ccall as a regular function
+@test parse("ccall([1], 2)[3]") == Expr(:ref, Expr(:call, :ccall, Expr(:vect, 1), 2), 3)
+@test parse("ccall(a).member") == Expr(:., Expr(:call, :ccall, :a), QuoteNode(:member))
