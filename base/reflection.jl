@@ -83,7 +83,7 @@ are also included.
 As a special case, all names defined in `Main` are considered \"exported\",
 since it is not idiomatic to explicitly export names from `Main`.
 """
-names(m::Module, all::Bool=false, imported::Bool=false) = sort!(ccall(:jl_module_names, Array{Symbol,1}, (Any,Cint,Cint), m, all, imported))
+names(m::Module, all::Bool=false, imported::Bool=false) = sort!(ccall(:jl_module_names, Array{Symbol,1}, (Any, Cint, Cint), m, all, imported))
 
 isexported(m::Module, s::Symbol) = ccall(:jl_module_exports_p, Cint, (Any, Any), m, s) != 0
 isdeprecated(m::Module, s::Symbol) = ccall(:jl_is_binding_deprecated, Cint, (Any, Any), m, s) != 0
@@ -370,12 +370,12 @@ function _methods_by_ftype(t::ANY, lim)
         return _methods(Any[tp...], length(tp), lim, [])
     end
     # XXX: the following can return incorrect answers that the above branch would have corrected
-    return ccall(:jl_matching_methods, Any, (Any,Cint,Cint), t, lim, 0)
+    return ccall(:jl_matching_methods, Any, (Any, Cint, Cint), t, lim, 0)
 end
 
 function _methods(t::Array,i,lim::Integer,matching::Array{Any,1})
     if i == 0
-        new = ccall(:jl_matching_methods, Any, (Any,Cint,Cint), Tuple{t...}, lim, 0)
+        new = ccall(:jl_matching_methods, Any, (Any, Cint, Cint), Tuple{t...}, lim, 0)
         new === false && return false
         append!(matching, new::Array{Any,1})
     else
@@ -438,7 +438,7 @@ methods(f::Core.Builtin) = MethodList(Method[], typeof(f).name.mt)
 function methods_including_ambiguous(f::ANY, t::ANY)
     ft = isa(f,Type) ? Type{f} : typeof(f)
     tt = isa(t,Type) ? Tuple{ft, t.parameters...} : Tuple{ft, t...}
-    ms = ccall(:jl_matching_methods, Any, (Any,Cint,Cint), tt, -1, 1)::Array{Any,1}
+    ms = ccall(:jl_matching_methods, Any, (Any, Cint, Cint), tt, -1, 1)::Array{Any,1}
     return MethodList(Method[m[3] for m in ms], typeof(f).name.mt)
 end
 function methods(f::ANY)
@@ -527,7 +527,7 @@ function _dump_function(linfo::Core.MethodInstance, native::Bool, wrapper::Bool,
 
     if native
         str = ccall(:jl_dump_function_asm, Ref{String},
-                    (Ptr{Void}, Cint, Cstring), llvmf, 0, syntax)
+                    (Ptr{Void}, Cint, Ptr{UInt8}), llvmf, 0, syntax)
     else
         str = ccall(:jl_dump_function_ir, Ref{String},
                     (Ptr{Void}, Bool, Bool), llvmf, strip_ir_metadata, dump_module)

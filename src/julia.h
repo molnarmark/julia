@@ -255,10 +255,6 @@ typedef struct _jl_method_t {
     int32_t called;  // bit flags: whether each of the first 8 arguments is called
     uint8_t isva;
     uint8_t isstaged;
-    // if there are intrinsic calls, sparams are probably required to compile successfully,
-    // and so unspecialized will be created for each linfo instead of using linfo->def->template
-    // 0 = no, 1 = yes, 2 = not yet known
-    uint8_t needs_sparam_vals_ducttape;
 
 // hidden fields:
     uint8_t traced;

@@ -1222,25 +1222,32 @@ function abstract_eval(e::ANY, vtypes::VarTable, sv::InferenceState)
         abstract_eval(e.args[1], vtypes, sv)
         t = Any
     elseif e.head === :foreigncall
+        rt = e.args[2]
+        if isdefined(sv.linfo, :def)
+            tvars = sv.linfo.def.tvars
+            if tvars !== svec()
+                env = data_pointer_from_objref(sv.linfo.sparam_vals) + sizeof(Ptr{Void})
+                rt = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), e.args[2], tvars, env)
+            end
+        end
         abstract_eval(e.args[1], vtypes, sv)
-        rt = abstract_eval(e.args[2], vtypes, sv)
-        for i = 3:length(e.args)
+        for i = 4:length(e.args)
             if abstract_eval(e.args[i], vtypes, sv) === Bottom
                 rt = Bottom
             end
         end
         if rt === Bottom
             t = Bottom
-        elseif !isType(rt)
-            t = Any
-        else
-            t = rt.parameters[1]
+        elseif isa(rt, Type)
+            t = rt
             if isa(t, DataType) && (t::DataType).name === Ref.name
                 t = t.parameters[1]
                 if t === Any
                     t = Bottom # a return type of Box{Any} is invalid
                 end
             end
+        else
+            t = Any
         end
     elseif e.head === :static_parameter
         n = e.args[1]
@@ -2242,7 +2249,7 @@ end
 
 # replace slots 1:na with argexprs, static params with spvals, and increment
 # other slots by offset.
-function substitute!(e::ANY, na, argexprs, spvals, offset)
+function substitute!(e::ANY, na::Int, argexprs::Vector{Any}, tvars::ANY, spvals::Vector{Any}, offset::Int)
     if isa(e, Slot)
         if 1 <= e.id <= na
             ae = argexprs[e.id]
@@ -2257,17 +2264,25 @@ function substitute!(e::ANY, na, argexprs, spvals, offset)
             return TypedSlot(e.id+offset, e.typ)
         end
     end
-    if isa(e,NewvarNode)
-        return NewvarNode(substitute!(e.slot, na, argexprs, spvals, offset))
+    if isa(e, NewvarNode)
+        return NewvarNode(substitute!(e.slot, na, argexprs, tvars, spvals, offset))
     end
-    if isa(e,Expr)
+    if isa(e, Expr)
         e = e::Expr
         head = e.head
         if head === :static_parameter
             return spvals[e.args[1]]
+        elseif head === :foreigncall
+            for i = 1:length(e.args)
+                if i == 2 || i == 3
+                    e.args[2] = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), e.args[2], tvars, spvals)
+                else
+                    e.args[i] = substitute!(e.args[i], na, argexprs, tvars, spvals, offset)
+                end
+            end
         elseif !is_meta_expr_head(head)
-            for i=1:length(e.args)
-                e.args[i] = substitute!(e.args[i], na, argexprs, spvals, offset)
+            for i = 1:length(e.args)
+                e.args[i] = substitute!(e.args[i], na, argexprs, tvars, spvals, offset)
             end
         end
     end
@@ -2636,14 +2651,14 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
         return invoke_NF()
     end
 
-    na = method.nargs
+    na = Int(method.nargs)
     # check for vararg function
     isva = false
     if na > 0 && method.isva
-        @assert length(argexprs) >= na-1
+        @assert length(argexprs) >= na - 1
         # construct tuple-forming expression for argument tail
         vararg = mk_tuplecall(argexprs[na:end], sv)
-        argexprs = Any[argexprs[1:(na-1)]..., vararg]
+        argexprs = Any[argexprs[1:(na - 1)]..., vararg]
         isva = true
     elseif na != length(argexprs)
         # we have a method match only because an earlier
@@ -2747,7 +2762,7 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
     prelude_stmts = Any[]
     stmts_free = true # true = all entries of stmts are effect_free
 
-    for i=na:-1:1 # stmts_free needs to be calculated in reverse-argument order
+    for i = na:-1:1 # stmts_free needs to be calculated in reverse-argument order
         #args_i = args[i]
         aei = argexprs[i]
         aeitype = argtype = widenconst(exprtype(aei, sv.src, sv.mod))
@@ -2796,10 +2811,10 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
     end
 
     # ok, substitute argument expressions for argument names in the body
-    body = substitute!(body, na, argexprs, spvals, length(sv.src.slotnames) - na)
-    append!(sv.src.slotnames, src.slotnames[na+1:end])
-    append!(sv.src.slottypes, src.slottypes[na+1:end])
-    append!(sv.src.slotflags, src.slotflags[na+1:end])
+    body = substitute!(body, na, argexprs, method.tvars, spvals, length(sv.src.slotnames) - na)
+    append!(sv.src.slotnames, src.slotnames[(na + 1):end])
+    append!(sv.src.slottypes, src.slottypes[(na + 1):end])
+    append!(sv.src.slotflags, src.slotflags[(na + 1):end])
 
     # make labels / goto statements unique
     # relocate inlining information

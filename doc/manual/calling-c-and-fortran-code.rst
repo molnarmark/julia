@@ -51,16 +51,20 @@ function, all inputs must be passed by reference.
 Finally, you can use :func:`ccall` to actually generate a call to the
 library function. Arguments to :func:`ccall` are as follows:
 
-1. (:function, "library") pair (must be a constant, but see below).
+1. A ``(:function, "library")`` pair, which must be written as a literal constant,
+
+   OR
+
+   a function pointer (for example, from :func:`dlsym`).
 
 2. Return type (see below for mapping the declared C type to Julia)
 
-   - This argument will be evaluated at compile-time.
+   - This argument will be evaluated when the containing method is declared.
 
 3. A tuple of input types. The input types must be written as a literal tuple,
    not a tuple-valued variable or expression.
 
-   - This argument will be evaluated at compile-time.
+   - This argument will be evaluated when the containing method is declared.
 
 4. The following arguments, if any, are the actual argument values
    passed to the function.
@@ -68,7 +72,7 @@ library function. Arguments to :func:`ccall` are as follows:
 As a complete but simple example, the following calls the ``clock``
 function from the standard C library::
 
-    julia> t = ccall( (:clock, "libc"), Int32, ())
+    julia> t = ccall((:clock, "libc"), Int32, ())
     2292761
 
     julia> t
@@ -136,12 +140,12 @@ Here is a slightly more complex example that discovers the local
 machine's hostname::
 
     function gethostname()
-      hostname = Array{UInt8}(128)
-      ccall((:gethostname, "libc"), Int32,
-            (Ptr{UInt8}, Csize_t),
-            hostname, sizeof(hostname))
-      hostname[end] = 0; # ensure null-termination
-      return unsafe_string(pointer(hostname))
+        hostname = Array{UInt8}(128)
+        ccall((:gethostname, "libc"), Int32,
+              (Ptr{UInt8}, Csize_t),
+              hostname, sizeof(hostname))
+        hostname[end] = 0; # ensure null-termination
+        return unsafe_string(pointer(hostname))
     end
 
 This example first allocates an array of bytes, then calls the C library
@@ -324,10 +328,11 @@ There are several special types to be aware of, as no other type can be defined 
     Exactly corresponds to the ``complex double`` type in C (or ``COMPLEX*16`` in Fortran).
 
 ``Signed``
-    Exactly corresponds to the ``signed`` type annotation in C (or any ``INTEGER`` type in Fortran). Any Julia type that is not a subtype of ``Signed`` is assumed to be unsigned.
+    Exactly corresponds to the ``signed`` type annotation in C (or any ``INTEGER`` type in Fortran).
+    Any Julia type that is not a subtype of ``Signed`` is assumed to be unsigned.
 
 ``Ref{T}``
-    Behaves like a ``Ptr{T}`` that owns its memory.
+    Behaves like a ``Ptr{T}`` that manages its memory via the Julia GC.
 
 ``Array{T,N}``
     When an array is passed to C as a ``Ptr{T}`` argument, it is
@@ -349,7 +354,8 @@ There are several special types to be aware of, as no other type can be defined 
 
 On all systems we currently support, basic C/C++ value types may be
 translated to Julia types as follows. Every C type also has a corresponding
-Julia type with the same name, prefixed by C. This can help for writing portable code (and remembering that an ``int`` in C is not the same as an ``Int`` in Julia).
+Julia type with the same name, prefixed by C. This can help for writing portable code
+(and remembering that an ``int`` in C is not the same as an ``Int`` in Julia).
 
 **System Independent:**
 
@@ -481,7 +487,7 @@ C name                  Standard Julia Alias    Julia Base Type
     A return type of ``Union{}`` means the function will not return
     i.e. C++11 ``[[noreturn]]`` or C11 ``_Noreturn`` (e.g. ``jl_throw`` or
     ``longjmp``). Do not use this for functions that return
-    no value (``void``) but do return.
+    no value (``void``) but do return, use ``Void`` instead.
 
 .. note::
 
@@ -533,29 +539,39 @@ the field that will have the greatest size (potentially including padding).
 When translating your fields to Julia, declare the Julia field to be only
 of that type.
 
-Arrays of parameters must be expanded manually, currently
-(either inline, or in an immutable helper type). For example::
+Arrays of parameters can be written as an NTuple. For example::
 
     in C:
     struct B {
         int A[3];
     };
-    b_a_2 = B.A[2];
+    b_a_2 = B.A[1];
 
     in Julia:
-    immutable B_A
-        A_1::Cint
-        A_2::Cint
-        A_3::Cint
-    end
     type B
-        A::B_A
+        A::NTuple{3, A}
     end
-    b_a_2 = B.A.(2)
+    b_a_2 = B.A[2]
 
-Arrays of unknown size are not supported.
+Arrays of unknown size (C99-complaint variable length structs specified by ``[]`` or ``[0]``) are not supported.
 
 In the future, some of these restrictions may be reduced or eliminated.
+
+
+Type Parameters
+~~~~~~~~~~~~~~~
+
+The static parameters of the function may be used as type parameters in the ``ccall`` signature,
+as long as they don't affect the layout of the type.
+For example, ``f{T}(x::T) = ccall(:valid, Ptr{T}, (Ptr{T},), x)``
+is valid, since ``Ptr`` is always a word-size bitstype.
+But, ``g{T}(x::T) = ccall(:notvalid, T, (T,), x)``
+is not valid, since the type layout of ``T`` is not known statically.
+
+This may sound like a strange restriction,
+but remember that since C is not a dynamic language like Julia,
+its functions can only accept a function signature with a statically-known fixed signature.
+
 
 SIMD Values
 ~~~~~~~~~~~
@@ -809,12 +825,12 @@ Here is a simple example of a C wrapper that returns a ``Ptr`` type::
     #     gsl_permutation * gsl_permutation_alloc (size_t n);
     function permutation_alloc(n::Integer)
         output_ptr = ccall(
-            (:gsl_permutation_alloc, :libgsl), #name of C function and library
-            Ptr{gsl_permutation},              #output type
-            (Csize_t,),                        #tuple of input types
-            n                                  #name of Julia variable to pass in
+            (:gsl_permutation_alloc, :libgsl), # name of C function and library
+            Ptr{gsl_permutation},              # output type
+            (Csize_t,),                        # tuple of input types
+            n                                  # name of Julia variable to pass in
         )
-        if output_ptr==C_NULL # Could not allocate memory
+        if output_ptr == C_NULL # Could not allocate memory
             throw(OutOfMemoryError())
         end
         return output_ptr
@@ -846,10 +862,10 @@ Here is a second example wrapping the corresponding destructor::
     #     void gsl_permutation_free (gsl_permutation * p);
     function permutation_free(p::Ref{gsl_permutation})
         ccall(
-            (:gsl_permutation_free, :libgsl), #name of C function and library
-            Void,                             #output type
-            (Ref{gsl_permutation},),          #tuple of input types
-            p                                 #name of Julia variable to pass in
+            (:gsl_permutation_free, :libgsl), # name of C function and library
+            Void,                             # output type
+            (Ref{gsl_permutation},),          # tuple of input types
+            p                                 # name of Julia variable to pass in
         )
     end
 
@@ -875,15 +891,19 @@ Here is a third example passing Julia arrays::
     #    int gsl_sf_bessel_Jn_array (int nmin, int nmax, double x,
     #                                double result_array[])
     function sf_bessel_Jn_array(nmin::Integer, nmax::Integer, x::Real)
-        if nmax<nmin throw(DomainError()) end
-        result_array = Array{Cdouble}(nmax-nmin+1)
+        if nmax < nmin
+            throw(DomainError())
+        end
+        result_array = Array{Cdouble}(nmax - nmin + 1)
         errorcode = ccall(
-            (:gsl_sf_bessel_Jn_array, :libgsl), #name of C function and library
-            Cint,                               #output type
-            (Cint, Cint, Cdouble, Ref{Cdouble}),#tuple of input types
-            nmin, nmax, x, result_array         #names of Julia variables to pass in
+            (:gsl_sf_bessel_Jn_array, :libgsl), # name of C function and library
+            Cint,                               # output type
+            (Cint, Cint, Cdouble, Ref{Cdouble}),# tuple of input types
+            nmin, nmax, x, result_array         # names of Julia variables to pass in
         )
-        if errorcode!= 0 error("GSL error code $errorcode") end
+        if errorcode != 0
+            error("GSL error code $errorcode")
+        end
         return result_array
     end
 
@@ -891,9 +911,9 @@ The C function wrapped returns an integer error code; the results of the actual
 evaluation of the Bessel J function populate the Julia array ``result_array``.
 This variable can only be used with corresponding input type declaration
 ``Ref{Cdouble}``, since its memory is allocated and managed by
-Julia, not C. The implicit call to :func:`Base.cconvert(Ref{Cdouble},
-result_array) <cconvert>` unpacks the Julia pointer to a Julia array data
-structure into a form understandable by C.
+Julia, not C. The implicit call
+to :func:`Base.cconvert(Ref{Cdouble}, result_array) <cconvert>`
+unpacks the Julia pointer to a Julia array data structure into a form understandable by C.
 
 Note that for this code to work correctly, ``result_array`` must be declared to
 be of type ``Ref{Cdouble}`` and not ``Ptr{Cdouble}``. The memory is managed by
@@ -942,7 +962,7 @@ A ``(name, library)`` function specification must be a constant expression.
 However, it is possible to use computed values as function names by staging
 through ``eval`` as follows::
 
-    @eval ccall(($(string("a","b")),"lib"), ...
+    @eval ccall(($(string("a", "b")), "lib"), ...
 
 This expression constructs a name using ``string``, then substitutes this
 name into a new :func:`ccall` expression, which is then evaluated. Keep in mind that
@@ -969,7 +989,7 @@ then cache it in a global variable for that session. For example::
 
     macro dlsym(func, lib)
         z, zlocal = gensym(string(func)), gensym()
-        eval(current_module(),:(global $z = C_NULL))
+        eval(current_module(), :(global $z = C_NULL))
         z = esc(z)
         quote
             let $zlocal::Ptr{Void} = $z::Ptr{Void}
@@ -1026,7 +1046,7 @@ Global variables exported by native libraries can be accessed by name using the
 identical to that used by :func:`ccall`, and a type describing the value stored in
 the variable::
 
-    julia> cglobal((:errno,:libc), Int32)
+    julia> cglobal((:errno, :libc), Int32)
     Ptr{Int32} @0x00007f418d0816b8
 
 The result is a pointer giving the address of the value. The value can be

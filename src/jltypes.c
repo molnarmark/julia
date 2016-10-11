@@ -141,7 +141,7 @@ JL_DLLEXPORT int jl_has_typevars_(jl_value_t *v, int incl_wildcard)
     return jl_has_typevars__(v, incl_wildcard, NULL, 0);
 }
 
-static int jl_has_typevars_from(jl_value_t *v, jl_svec_t *p)
+int jl_has_typevars_from(jl_value_t *v, jl_svec_t *p)
 {
     if (jl_svec_len(p) == 0) return 0;
     return jl_has_typevars__(v, 0, jl_svec_data(p), jl_svec_len(p));
@@ -2542,6 +2542,32 @@ static jl_value_t *inst_type_w_(jl_value_t *t, jl_value_t **env, size_t n,
 jl_value_t *jl_instantiate_type_with(jl_value_t *t, jl_value_t **env, size_t n)
 {
     return inst_type_w_((jl_value_t*)t, env, n, NULL, 1);
+}
+
+JL_DLLEXPORT jl_value_t *jl_instantiate_type_in_env(jl_value_t *ty, jl_value_t *sparam_syms, jl_value_t **sparam_vals)
+{
+    jl_value_t *typ;
+    JL_TRY {
+        if (jl_is_typevar(sparam_syms)) {
+            jl_value_t *env1[2];
+            env1[0] = sparam_syms;
+            env1[1] = sparam_vals[0];
+            typ = jl_instantiate_type_with(ty, env1, 1);
+        }
+        else {
+            size_t i, np = jl_svec_len(sparam_syms);
+            jl_value_t **env = (jl_value_t**)alloca(sizeof(jl_value_t*) * 2 * np);
+            for (i = 0; i < np; i++) {
+                env[i * 2 + 0] = jl_svecref(sparam_syms, i);
+                env[i * 2 + 1] = sparam_vals[i];
+            }
+            typ = jl_instantiate_type_with(ty, env, np);
+        }
+    }
+    JL_CATCH {
+        typ = jl_bottom_type;
+    }
+    return typ;
 }
 
 jl_datatype_t *jl_wrap_Type(jl_value_t *t)
