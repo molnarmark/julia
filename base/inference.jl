@@ -1606,8 +1606,6 @@ update_valid_age!(edge::InferenceState, sv::InferenceState) = update_valid_age!(
 update_valid_age!(li::MethodInstance, sv::InferenceState) = update_valid_age!(min_world(li), max_world(li), sv)
 
 function add_backedge(li::MethodInstance, caller::InferenceState)
-    # TODO: if li is not providing the inferred return type directly
-    #       the backedge must be to the WIP InferenceState, not the MethodInstance
     isdefined(caller.linfo, :def) || return # don't add backedges to toplevel exprs
     if caller.stmt_edges[caller.currpc] === ()
         caller.stmt_edges[caller.currpc] = []
@@ -1628,19 +1626,23 @@ function add_mt_backedge(mt::MethodTable, typ::ANY, caller::InferenceState)
 end
 
 function finalize_backedges(frame::InferenceState)
-    caller = frame.linfo
-    for edges in frame.stmt_edges
-        i = 1
-        while i < length(edges)
-            to = edges[i]
-            if isa(to, MethodInstance)
-                ccall(:jl_method_instance_add_backedge, Void, (Any, Any), to, caller)
-                i += 1
-            else
-                typeassert(to, MethodTable)
-                typ = edges[i + 1]
-                ccall(:jl_method_table_add_backedge, Void, (Any, Any, Any), to, typ, caller)
-                i += 2
+    # add the real backedges now
+    toplevel = !isdefined(frame.linfo, :def)
+    if !toplevel && frame.cached && frame.max_valid == typemax(UInt)
+        caller = frame.linfo
+        for edges in frame.stmt_edges
+            i = 1
+            while i <= length(edges)
+                to = edges[i]
+                if isa(to, MethodInstance)
+                    ccall(:jl_method_instance_add_backedge, Void, (Any, Any), to, caller)
+                    i += 1
+                else
+                    typeassert(to, MethodTable)
+                    typ = edges[i + 1]
+                    ccall(:jl_method_table_add_backedge, Void, (Any, Any, Any), to, typ, caller)
+                    i += 2
+                end
             end
         end
     end
@@ -1728,13 +1730,13 @@ function typeinf_edge(method::Method, atypes::ANY, sparams::SimpleVector, caller
     code = code_for_method(method, atypes, sparams, caller.params.world)
     code === nothing && return Any
     code = code::MethodInstance
-    add_backedge(code, caller) # TODO: need to defer the tracking of this backedge till later
     if isdefined(code, :inferred)
         # return rettype if the code is already inferred
         # staged functions make this hard since they have two "inferred" conditions,
         # so need to check whether the code itself is also inferred
         inf = code.inferred
         if !isa(inf, CodeInfo) || (inf::CodeInfo).inferred
+            add_backedge(code, caller)
             if isdefined(code, :inferred_const)
                 return abstract_eval_constant(code.inferred_const)
             else
@@ -1879,12 +1881,21 @@ function typeinf_loop(frame)
                         i.inworkq = true
                     end
                 end
+                for i in length(fplist):-1:1
+                    # optimize and record the results
+                    optimize(fplist[i]::InferenceState) # this may add incomplete work to active
+                end
                 for i in fplist
                     # push valid ages from each node across the graph
                     converge_valid_age!(i::InferenceState)
                 end
-                for i in length(fplist):-1:1
-                    finish(fplist[i]::InferenceState) # this may add incomplete work to active
+                for i in fplist
+                    # optimize and record the results
+                    finish(i::InferenceState)
+                end
+                for i in fplist
+                    # update and record all of the back edges for the finished world
+                    finalize_backedges(i::InferenceState)
                 end
             end
         end
@@ -2049,6 +2060,7 @@ function typeinf_frame(frame)
     if finished || frame.fixedpoint
         if finished
             finish(frame)
+            finalize_backedges(frame)
         else # fixedpoint propagation
             for (i, _) in frame.edges
                 i = i::InferenceState
@@ -2240,11 +2252,6 @@ function finish(me::InferenceState)
                 me.linfo.inInference = false
                 me.linfo = cache
             end
-            if max_valid == typemax(UInt)
-                # add the real backedges now
-                # XXX: defer this until the entire subgraph is cached
-                finalize_backedges(me)
-            end
         end
     end
 
@@ -2261,11 +2268,12 @@ function finish(me::InferenceState)
             i.inworkq || push!(workq, i)
             i.inworkq = true
         end
+        add_backedge(me.linfo, i)
     end
 
     # finalize and record the linfo result
-    me.src.inferred = true
     me.cached && (me.linfo.inInference = false)
+    me.src.inferred = true
     me.inferred = true
     nothing
 end

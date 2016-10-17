@@ -278,6 +278,7 @@ jl_code_info_t *jl_type_infer(jl_method_instance_t **pli, size_t world, int forc
     return src;
 }
 
+
 static int jl_is_rettype_inferred(jl_method_instance_t *li)
 {
     if (!li->inferred)
@@ -287,36 +288,6 @@ static int jl_is_rettype_inferred(jl_method_instance_t *li)
     return 1;
 }
 
-static int set_min_world(jl_typemap_entry_t *entry, void *closure)
-{
-    // entry->min_world should be >= li->min_world
-    if (entry->func.value == closure) {
-        jl_method_instance_t *li = (jl_method_instance_t*)closure;
-        entry->min_world = li->min_world;
-    }
-    return 1;
-}
-static int set_max_world(jl_typemap_entry_t *entry, void *closure)
-{
-    // entry->max_world should be <= li->max_world
-    if (entry->func.value == closure) {
-        jl_method_instance_t *li = (jl_method_instance_t*)closure;
-        entry->max_world = li->max_world;
-    }
-    return 1;
-}
-static void truncate_world_range(jl_method_instance_t *replaced, jl_typemap_visitor_fptr fptr)
-{
-    jl_method_t *m = replaced->def;
-    // truncate the max-valid in the specializations caches
-    jl_typemap_visitor(m->specializations, fptr, (void*)replaced);
-    if (m->invokes.unknown != NULL)
-        jl_typemap_visitor(m->invokes, fptr, (void*)replaced);
-    // truncate the max-valid in the gf cache
-    jl_datatype_t *gf = jl_first_argument_datatype((jl_value_t*)m->sig);
-    assert(jl_is_datatype(gf) && gf->name->mt && "method signature invalid?");
-    jl_typemap_visitor(gf->name->mt->cache, fptr, (void*)replaced);
-}
 
 struct set_world {
     jl_method_instance_t *replaced;
@@ -330,6 +301,32 @@ static int set_max_world2(jl_typemap_entry_t *entry, void *closure0)
         entry->max_world = closure->world;
     }
     return 1;
+}
+static int set_min_world2(jl_typemap_entry_t *entry, void *closure0)
+{
+    struct set_world *closure = (struct set_world*)closure0;
+    // entry->min_world should be >= closure->replaced->min_world and >= closure->world
+    if (entry->func.linfo == closure->replaced) {
+        entry->min_world = closure->world;
+    }
+    return 1;
+}
+static void update_world_bound(jl_method_instance_t *replaced, jl_typemap_visitor_fptr fptr, size_t world)
+{
+    struct set_world update;
+    update.replaced = replaced;
+    update.world = world;
+
+    jl_method_t *m = replaced->def;
+    // update the world-valid in the specializations caches
+    jl_typemap_visitor(m->specializations, fptr, (void*)&update);
+    // update the world-valid in the invoke cache
+    if (m->invokes.unknown != NULL)
+        jl_typemap_visitor(m->invokes, fptr, (void*)&update);
+    // update the world-valid in the gf cache
+    jl_datatype_t *gf = jl_first_argument_datatype((jl_value_t*)m->sig);
+    assert(jl_is_datatype(gf) && gf->name->mt && "method signature invalid?");
+    jl_typemap_visitor(gf->name->mt->cache, fptr, (void*)&update);
 }
 
 
@@ -353,13 +350,19 @@ JL_DLLEXPORT jl_method_instance_t* jl_set_method_inferred(
             int isinferred =  jl_is_rettype_inferred(li);
             if (!isinferred && li->min_world >= min_world && li->max_world <= max_world) {
                 // expand the current (uninferred) entry to cover the full inferred range
+                // only update the specializations though, since the method table may have other
+                // reasons for needing a narrower applicability range
+                struct set_world update;
+                update.replaced = li;
                 if (li->min_world != min_world) {
                     li->min_world = min_world;
-                    jl_typemap_visitor(li->def->specializations, set_min_world, (void*)li);
+                    update.world = min_world;
+                    jl_typemap_visitor(li->def->specializations, set_min_world2, (void*)&update);
                 }
                 if (li->max_world != max_world) {
                     li->max_world = max_world;
-                    jl_typemap_visitor(li->def->specializations, set_max_world, (void*)li);
+                    update.world = max_world;
+                    jl_typemap_visitor(li->def->specializations, set_max_world2, (void*)&update);
                 }
             }
             else {
@@ -374,19 +377,16 @@ JL_DLLEXPORT jl_method_instance_t* jl_set_method_inferred(
                     if (li->max_world > max_world) {
                         // prefer making it applicable to future ages,
                         // as those are more likely to be useful
-                        li->min_world = max_world + 1;
-                        truncate_world_range(li, set_min_world);
+                        update_world_bound(li, set_min_world2, max_world + 1);
                     }
                     else if (li->min_world < min_world) {
                         assert(min_world > 1 && "logic violation: min(li->min_world) == 1 (by construction), so min(min_world) == 2");
-                        li->max_world = min_world - 1;
-                        truncate_world_range(li, set_max_world);
+                        update_world_bound(li, set_max_world2, min_world - 1);
                     }
                     else {
                         // old inferred li is fully covered by new inference result, so just delete it
                         assert(isinferred);
-                        li->max_world = li->min_world - 1;
-                        truncate_world_range(li, set_max_world);
+                        update_world_bound(li, set_max_world2, li->min_world - 1);
                     }
                 }
 
@@ -423,6 +423,7 @@ JL_DLLEXPORT jl_method_instance_t* jl_set_method_inferred(
     return li;
 }
 
+
 static int get_spec_unspec_list(jl_typemap_entry_t *l, void *closure)
 {
     if (jl_is_method_instance(l->func.value) && !jl_is_rettype_inferred(l->func.linfo))
@@ -435,6 +436,7 @@ static int get_method_unspec_list(jl_typemap_entry_t *def, void *closure)
     jl_typemap_visitor(def->func.method->specializations, get_spec_unspec_list, closure);
     return 1;
 }
+
 
 static void jl_reset_mt_caches(jl_module_t *m, jl_array_t *unspec)
 {
@@ -1207,7 +1209,7 @@ static void invalidate_method_instance(jl_method_instance_t *replaced, size_t ma
         // recurse to all backedges to update their valid range also
         assert(replaced->min_world <= max_world && "attempting to set invalid world constraints");
         replaced->max_world = max_world;
-        truncate_world_range(replaced, set_max_world);
+        update_world_bound(replaced, set_max_world2, max_world);
         if (backedges) {
             size_t i, l = jl_array_len(backedges);
             for (i = 0; i < l; i++) {
@@ -1232,9 +1234,13 @@ static int invalidate_backedges(jl_typemap_entry_t *oldentry, struct typemap_int
         struct set_world def;
         def.replaced = oldentry->func.linfo;
         def.world = closure->max_world;
+        jl_method_t *m = def.replaced->def;
 
+        // truncate the max-valid in the invoke cache
+        if (m->invokes.unknown != NULL)
+            jl_typemap_visitor(m->invokes, set_max_world2, (void*)&def);
         // invalidate mt cache entries
-        jl_datatype_t *gf = jl_first_argument_datatype((jl_value_t*)def.replaced->def->sig);
+        jl_datatype_t *gf = jl_first_argument_datatype((jl_value_t*)m->sig);
         assert(jl_is_datatype(gf) && gf->name->mt && "method signature invalid?");
         jl_typemap_visitor(gf->name->mt->cache, set_max_world2, (void*)&def);
 
@@ -1453,22 +1459,16 @@ jl_method_instance_t *jl_method_lookup_by_type(jl_methtable_t *mt, jl_tupletype_
     jl_typemap_entry_t *entry = jl_typemap_assoc_by_type(mt->cache, types, NULL, 0, 1, jl_cachearg_offset(mt), world);
     if (entry) {
         jl_method_instance_t *linfo = (jl_method_instance_t*)entry->func.value;
-#ifndef JULIA_THREADING
-        // with threading, this condition is only eventually-consistent
         assert(linfo->min_world <= entry->min_world && linfo->max_world >= entry->max_world &&
                 "typemap consistency error: MethodInstance doesn't apply to full range of its entry");
-#endif
         return linfo;
     }
     JL_LOCK(&mt->writelock);
     entry = jl_typemap_assoc_by_type(mt->cache, types, NULL, 0, 1, jl_cachearg_offset(mt), world);
     if (entry) {
         jl_method_instance_t *linfo = (jl_method_instance_t*)entry->func.value;
-#ifndef JULIA_THREADING
-        // with threading, this condition is only eventually-consistent
         assert(linfo->min_world <= entry->min_world && linfo->max_world >= entry->max_world &&
                 "typemap consistency error: MethodInstance doesn't apply to full range of its entry");
-#endif
         JL_UNLOCK(&mt->writelock);
         return linfo;
     }
@@ -1630,6 +1630,7 @@ jl_method_instance_t *jl_get_specialization1(jl_tupletype_t *types, size_t world
     // not be the case
     // TODO: the above should be false, but better safe than sorry?
     jl_method_instance_t *sf = jl_method_lookup_by_type(mt, types, 1, 1, 1, world);
+    assert(sf == NULL || (sf->min_world <= world && sf->max_world >= world));
     JL_GC_PUSH1(&sf);
     if (sf != NULL && jl_has_call_ambiguities(types, sf->def)) {
         sf = NULL;
