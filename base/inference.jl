@@ -1596,6 +1596,7 @@ function converge_valid_age!(sv::InferenceState)
     nothing
 end
 
+# work towards converging the valid age range for sv
 function update_valid_age!(min_valid::UInt, max_valid::UInt, sv::InferenceState)
     sv.min_valid = max(sv.min_valid, min_valid)
     sv.max_valid = min(sv.max_valid, max_valid)
@@ -1605,6 +1606,7 @@ end
 update_valid_age!(edge::InferenceState, sv::InferenceState) = update_valid_age!(edge.min_valid, edge.max_valid, sv)
 update_valid_age!(li::MethodInstance, sv::InferenceState) = update_valid_age!(min_world(li), max_world(li), sv)
 
+# temporarily accumulate our edges to later add as backedges in the callee
 function add_backedge(li::MethodInstance, caller::InferenceState)
     isdefined(caller.linfo, :def) || return # don't add backedges to toplevel exprs
     if caller.stmt_edges[caller.currpc] === ()
@@ -1615,6 +1617,7 @@ function add_backedge(li::MethodInstance, caller::InferenceState)
     nothing
 end
 
+# temporarily accumulate our no method errors to later add as backedges in the callee method table
 function add_mt_backedge(mt::MethodTable, typ::ANY, caller::InferenceState)
     isdefined(caller.linfo, :def) || return # don't add backedges to toplevel exprs
     if caller.stmt_edges[caller.currpc] === ()
@@ -1625,8 +1628,8 @@ function add_mt_backedge(mt::MethodTable, typ::ANY, caller::InferenceState)
     nothing
 end
 
+# add the real backedges now
 function finalize_backedges(frame::InferenceState)
-    # add the real backedges now
     toplevel = !isdefined(frame.linfo, :def)
     if !toplevel && frame.cached && frame.max_valid == typemax(UInt)
         caller = frame.linfo
@@ -1883,14 +1886,15 @@ function typeinf_loop(frame)
                 end
                 for i in length(fplist):-1:1
                     # optimize and record the results
+                    # the reverse order makes it more likely to inline a callee into its caller
                     optimize(fplist[i]::InferenceState) # this may add incomplete work to active
                 end
                 for i in fplist
-                    # push valid ages from each node across the graph
+                    # push valid ages from each node across the graph cycle
                     converge_valid_age!(i::InferenceState)
                 end
                 for i in fplist
-                    # optimize and record the results
+                    # record the results
                     finish(i::InferenceState)
                 end
                 for i in fplist
@@ -2059,6 +2063,7 @@ function typeinf_frame(frame)
 
     if finished || frame.fixedpoint
         if finished
+            optimize(frame)
             finish(frame)
             finalize_backedges(frame)
         else # fixedpoint propagation
@@ -2118,8 +2123,8 @@ function isinlineable(m::Method, src::CodeInfo)
 end
 
 # inference completed on `me`
-# update the MethodInstance and notify the edges
-function finish(me::InferenceState)
+# now converge the optimization work
+function optimize(me::InferenceState)
     for (i, _) in me.edges
         i = i::InferenceState
         @assert i.fixedpoint
@@ -2139,8 +2144,6 @@ function finish(me::InferenceState)
     end
     type_annotate!(me)
 
-    do_coverage = coverage_enabled()
-    force_noinline = false
     # run optimization passes on fulltree
     if me.optimize
         # This pass is required for the AST to be valid in codegen
@@ -2155,12 +2158,22 @@ function finish(me::InferenceState)
         getfield_elim_pass!(me)
         # Clean up for `alloc_elim_pass!` and `getfield_elim_pass!`
         void_use_elim_pass!(me)
+        do_coverage = coverage_enabled()
         meta_elim_pass!(me.src.code::Array{Any,1}, me.src.propagate_inbounds, do_coverage)
+    end
+    widen_all_consts!(me.src)
+    nothing
+end
+
+# inference completed on `me`
+# update the MethodInstance and notify the edges
+function finish(me::InferenceState)
+    force_noinline = false
+    if me.optimize
         # Pop metadata before label reindexing
         force_noinline = popmeta!(me.src.code::Array{Any,1}, :noinline)[1]
         reindex_labels!(me)
     end
-    widen_all_consts!(me.src)
 
     if isa(me.bestguess, Const)
         bg = me.bestguess::Const
@@ -2174,6 +2187,7 @@ function finish(me::InferenceState)
         inferred_const = nothing
     end
 
+    do_coverage = coverage_enabled()
     const_api = false
     ispure = me.src.pure
     inferred = me.src
@@ -3050,13 +3064,14 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
         end
     end
 
-    do_coverage = coverage_enabled()
     inlining_ignore = function (stmt::ANY)
         isa(stmt, Expr) && return is_meta_expr(stmt::Expr)
         isa(stmt, LineNumberNode) && return true
         stmt === nothing && return true
         return false
     end
+
+    do_coverage = coverage_enabled()
     if do_coverage
         line = method.line
         if !isempty(stmts) && isa(stmts[1], LineNumberNode)
