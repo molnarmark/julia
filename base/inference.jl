@@ -4215,7 +4215,7 @@ let fs = Any[typeinf_ext, typeinf_loop, typeinf_edge, occurs_outside_getfield, e
         end
     end
     for f in fs
-        for m in _methods_by_ftype(Tuple{typeof(f), Vararg{Any}}, 10, typemax(UInt), UInt[typemin(UInt)], UInt[typemax(UInt)])
+        for m in _methods_by_ftype(Tuple{typeof(f), Vararg{Any}}, 10, typemax(UInt))
             # remove any TypeVars from the intersection
             typ = Any[m[1].parameters...]
             for i = 1:length(typ)

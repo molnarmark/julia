@@ -355,11 +355,12 @@ end
 function _methods(f::ANY, t::ANY, lim::Int, world::UInt)
     ft = isa(f,Type) ? Type{f} : typeof(f)
     tt = isa(t,Type) ? Tuple{ft, t.parameters...} : Tuple{ft, t...}
-    min = UInt[typemin(UInt)]
-    max = UInt[typemax(UInt)]
-    return _methods_by_ftype(tt, lim, world, min, max)
+    return _methods_by_ftype(tt, lim, world)
 end
 
+function _methods_by_ftype(t::ANY, lim::Int, world::UInt)
+    return _methods_by_ftype(t, lim, world, UInt[typemin(UInt)], UInt[typemax(UInt)])
+end
 function _methods_by_ftype(t::ANY, lim::Int, world::UInt, min::Array{UInt,1}, max::Array{UInt,1})
     tp = t.parameters::SimpleVector
     nu = 1
@@ -757,9 +758,7 @@ end
 function isambiguous(m1::Method, m2::Method)
     ti = typeintersect(m1.sig, m2.sig)
     ti === Bottom && return false
-    min = UInt[typemin(UInt)]
-    max = UInt[typemax(UInt)]
-    ml = _methods_by_ftype(ti, -1, typemax(UInt), min, max)
+    ml = _methods_by_ftype(ti, -1, typemax(UInt))
     isempty(ml) && return true
     for m in ml
         if ti <: m[3].sig

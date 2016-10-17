@@ -281,10 +281,8 @@ function get_type_call(expr::Expr)
         found ? push!(args, typ) : push!(args, Any)
     end
     # use _methods_by_ftype as the function is supplied as a type
-    min = UInt[typemin(UInt)]
-    max = UInt[typemax(UInt)]
     world = typemax(UInt)
-    mt = Base._methods_by_ftype(Tuple{ft, args...}, -1, world, min, max)
+    mt = Base._methods_by_ftype(Tuple{ft, args...}, -1, world)
     length(mt) == 1 || return (Any, false)
     m = first(mt)
     # Typeinference
