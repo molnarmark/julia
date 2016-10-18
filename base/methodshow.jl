@@ -60,7 +60,7 @@ end
 
 function kwarg_decl(m::Method, kwtype::DataType)
     sig = Tuple{kwtype, Core.AnyVector, m.sig.parameters...}
-    kwli = ccall(:jl_methtable_lookup, Any, (Any, Any, UInt), kwtype.name.mt, sig, getfield(m, Symbol("max-age")) % UInt)
+    kwli = ccall(:jl_methtable_lookup, Any, (Any, Any, UInt), kwtype.name.mt, sig, max_world(m))
     if kwli !== nothing
         kwli = kwli::Method
         src = kwli.isstaged ? kwli.unspecialized.inferred : kwli.source

@@ -366,7 +366,7 @@ jl_method_instance_t *jl_method_lookup_by_type(jl_methtable_t *mt, jl_tupletype_
 jl_method_instance_t *jl_method_lookup(jl_methtable_t *mt, jl_value_t **args, size_t nargs, int cache, size_t world);
 jl_value_t *jl_gf_invoke(jl_tupletype_t *types, jl_value_t **args, size_t nargs);
 
-jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes);
+JL_DLLEXPORT jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes);
 int jl_has_intrinsics(jl_method_instance_t *li, jl_value_t *v, jl_module_t *m);
 
 jl_value_t *jl_nth_slot_type(jl_tupletype_t *sig, size_t i);

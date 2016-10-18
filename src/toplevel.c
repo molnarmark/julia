@@ -800,7 +800,7 @@ static jl_datatype_t *first_arg_datatype(jl_value_t *a, int got_tuple1)
 }
 
 // get DataType of first tuple element, or NULL if cannot be determined
-jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes)
+JL_DLLEXPORT jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes)
 {
     return first_arg_datatype(argtypes, 0);
 }
