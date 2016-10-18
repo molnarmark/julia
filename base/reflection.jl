@@ -768,9 +768,7 @@ function isambiguous(m1::Method, m2::Method)
     return true
 end
 
-let _min_world = Symbol("min-world"), _max_world = Symbol("max-world")
-    global min_world(m::Method) = reinterpret(UInt, getfield(m, _min_world))
-    global max_world(m::Method) = reinterpret(UInt, getfield(m, _max_world))
-    global min_world(m::Core.MethodInstance) = reinterpret(UInt, getfield(m, _min_world))
-    global max_world(m::Core.MethodInstance) = reinterpret(UInt, getfield(m, _max_world))
-end
+min_world(m::Method) = reinterpret(UInt, m.min_world)
+max_world(m::Method) = reinterpret(UInt, m.max_world)
+min_world(m::Core.MethodInstance) = reinterpret(UInt, m.min_world)
+max_world(m::Core.MethodInstance) = reinterpret(UInt, m.max_world)
