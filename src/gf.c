@@ -1263,6 +1263,7 @@ static int invalidate_backedges(jl_typemap_entry_t *oldentry, struct typemap_int
 // add a backedge from callee to caller
 JL_DLLEXPORT void jl_method_instance_add_backedge(jl_method_instance_t *callee, jl_method_instance_t *caller)
 {
+    assert(callee->min_world <= caller->min_world && callee->max_world >= caller->max_world);
     JL_LOCK(&callee->def->writelock);
     if (!callee->backedges) {
         // lazy-init the backedges array
@@ -1284,7 +1285,7 @@ JL_DLLEXPORT void jl_method_instance_add_backedge(jl_method_instance_t *callee, 
 }
 
 // add a backedge from a non-existent signature to caller
-JL_DLLEXPORT void jl_method_table_add_backedge(jl_methtable_t *mt, jl_value_t *typ, jl_value_t *linfo)
+JL_DLLEXPORT void jl_method_table_add_backedge(jl_methtable_t *mt, jl_value_t *typ, jl_value_t *caller)
 {
     JL_LOCK(&mt->writelock);
     if (!mt->backedges) {
@@ -1292,13 +1293,13 @@ JL_DLLEXPORT void jl_method_table_add_backedge(jl_methtable_t *mt, jl_value_t *t
         mt->backedges = jl_alloc_vec_any(2);
         jl_gc_wb(mt, mt->backedges);
         jl_array_ptr_set(mt->backedges, 0, typ);
-        jl_array_ptr_set(mt->backedges, 1, linfo);
+        jl_array_ptr_set(mt->backedges, 1, caller);
     }
     else {
         size_t i, l = jl_array_len(mt->backedges);
         for (i = 1; i < l; i += 2) {
             if (jl_types_equal(jl_array_ptr_ref(mt->backedges, i - 1), typ)) {
-                if (jl_array_ptr_ref(mt->backedges, i) == linfo) {
+                if (jl_array_ptr_ref(mt->backedges, i) == caller) {
                     JL_UNLOCK(&mt->writelock);
                     return;
                 }
@@ -1307,7 +1308,7 @@ JL_DLLEXPORT void jl_method_table_add_backedge(jl_methtable_t *mt, jl_value_t *t
             }
         }
         jl_array_ptr_1d_push(mt->backedges, typ);
-        jl_array_ptr_1d_push(mt->backedges, linfo);
+        jl_array_ptr_1d_push(mt->backedges, caller);
     }
     JL_UNLOCK(&mt->writelock);
 }
