@@ -1281,7 +1281,8 @@ static size_t jl_static_show_x_(JL_STREAM *out, jl_value_t *v, jl_datatype_t *vt
         }
         n += jl_printf(out, "%s", jl_symbol_name(dv->name->name));
         if (dv->parameters && (jl_value_t*)dv != dv->name->wrapper &&
-            !jl_types_equal((jl_value_t*)dv, (jl_value_t*)jl_tuple_type)) {
+            (jl_has_free_typevars(v) ||
+             !jl_types_equal((jl_value_t*)dv, (jl_value_t*)jl_tuple_type))) {
             size_t j, tlen = jl_nparams(dv);
             if (tlen > 0) {
                 n += jl_printf(out, "{");
@@ -1359,22 +1360,24 @@ static size_t jl_static_show_x_(JL_STREAM *out, jl_value_t *v, jl_datatype_t *vt
         n += jl_printf(out, "}");
     }
     else if (vt == jl_unionall_type) {
-        n += jl_static_show_x(out, ((jl_unionall_t*)v)->body, depth);
+        jl_unionall_t *ua = (jl_unionall_t*)v;
+        jl_tvar_t *var = ua->var;
+        n += jl_static_show_x(out, ua->body, depth);
         n += jl_printf(out, " where ");
-        n += jl_static_show_x(out, (jl_value_t*)((jl_unionall_t*)v)->var, depth);
-    }
-    else if (vt == jl_tvar_type) {
-        jl_value_t *lb = ((jl_tvar_t*)v)->lb, *ub = ((jl_tvar_t*)v)->ub;
+        jl_value_t *lb = var->lb, *ub = var->ub;
         if (lb != jl_bottom_type) {
             if (jl_is_unionall(lb)) n += jl_printf(out, "(");
             n += jl_static_show(out, lb);
             if (jl_is_unionall(lb)) n += jl_printf(out, ")");
             n += jl_printf(out, "<:");
         }
-        n += jl_printf(out, "%s<:", jl_symbol_name(((jl_tvar_t*)v)->name));
+        n += jl_printf(out, "%s<:", jl_symbol_name(var->name));
         if (jl_is_unionall(ub)) n += jl_printf(out, "(");
         n += jl_static_show(out, ub);
         if (jl_is_unionall(ub)) n += jl_printf(out, ")");
+    }
+    else if (vt == jl_tvar_type) {
+        n += jl_printf(out, "%s", jl_symbol_name(((jl_tvar_t*)v)->name));
     }
     else if (vt == jl_module_type) {
         jl_module_t *m = (jl_module_t*)v;
