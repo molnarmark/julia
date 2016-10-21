@@ -240,6 +240,24 @@ function test_3()
                        (@UnionAll T @UnionAll T<:S<:T Tuple{Ref{T},S}))
     @test issub_strict((@UnionAll T Tuple{Ref{T}, T}),
                        (@UnionAll T @UnionAll S>:T Tuple{Ref{T}, S}))
+
+    A = @UnionAll T Tuple{T,Ptr{T}}
+    B = @UnionAll T Tuple{Ptr{T},T}
+
+    C = @UnionAll T>:Ptr @UnionAll S>:Ptr    Tuple{Ptr{T},Ptr{S}}
+    D = @UnionAll T>:Ptr @UnionAll S>:Ptr{T} Tuple{Ptr{T},Ptr{S}}
+    E = @UnionAll T>:Ptr @UnionAll S>:Ptr{T} Tuple{Ptr{S},Ptr{T}}
+
+    @test issub_strict(C, A)
+    @test issub_strict(C, B)
+    # TODO jb/subtype get this to pass
+    #@test issub_strict(C, D)
+    @test issub_strict(Union{D,E}, A)
+    @test issub_strict(Union{D,E}, B)
+
+    @test !issub((@UnionAll T>:Integer @UnionAll S>:Ptr Tuple{Ptr{T},Ptr{S}}), B)
+
+    @test  issub((@UnionAll T>:Ptr @UnionAll S>:Integer Tuple{Ptr{T},Ptr{S}}), B)
 end
 
 # level 4: Union
@@ -495,8 +513,26 @@ macro testintersect(a, b, result)
         cmp = :isequal_type
     end
     Base.remove_linenums!(quote
-        @test $(esc(cmp))(_type_intersect($(esc(a)), $(esc(b))), $(esc(result)))
-        @test $(esc(cmp))(_type_intersect($(esc(b)), $(esc(a))), $(esc(result)))
+        if !($(esc(cmp))(_type_intersect($(esc(a)), $(esc(b))), $(esc(result))))
+            show($a)
+            println()
+            show($b)
+            println()
+            show(_type_intersect($a, $b))
+            println()
+            @test false
+        end
+        #@test $(esc(cmp))(_type_intersect($(esc(a)), $(esc(b))), $(esc(result)))
+        if !($(esc(cmp))(_type_intersect($(esc(b)), $(esc(a))), $(esc(result))))
+            show($b)
+            println()
+            show($a)
+            println()
+            show(_type_intersect($b, $a))
+            println()
+            @test false
+        end
+        #@test $(esc(cmp))(_type_intersect($(esc(b)), $(esc(a))), $(esc(result)))
     end)
 end
 
@@ -540,10 +576,17 @@ function test_intersection()
     @testintersect((@UnionAll T Tuple{T, AbstractArray{T}}), Tuple{Int, Array{Number,1}},
                    Tuple{Int, Array{Number,1}})
 
+    # typevar corresponding to a type it will end up being neither greater than nor
+    # less than
+    @testintersect((@UnionAll T Tuple{T, Ref{T}}), Tuple{Array{Int}, Ref{AbstractVector}},
+                   Tuple{Array{Int,1}, Ref{AbstractVector}})
+
     @testintersect((@UnionAll T Tuple{T, AbstractArray{T}}), Tuple{Any, Array{Number,1}},
                    Tuple{Number, Array{Number,1}})
     @testintersect((@UnionAll T Tuple{Array{T}, Array{T}}), Tuple{Array, Array{Any}}, !Bottom)
 
+    @testintersect((@UnionAll T Tuple{T,T}), Tuple{Real, Real}, (@UnionAll T<:Real Tuple{T,T}))
+    @testintersect((@UnionAll T Tuple{T}), Tuple{Real}, Tuple{Real})
     @testintersect((@UnionAll T Tuple{T,T}), Tuple{Union{Float64,Int64},Int64}, Tuple{Int64,Int64})
     @testintersect((@UnionAll T Tuple{T,T}), Tuple{Int64,Union{Float64,Int64}}, Tuple{Int64,Int64})
 
@@ -552,9 +595,11 @@ function test_intersection()
 
     @testintersect((@UnionAll T Tuple{Type{Array{T,1}},Array{T,1}}),
                    Tuple{Type{AbstractVector},Vector{Int}}, Bottom)
+
     @testintersect(Tuple{Type{Vector{Complex128}}, AbstractVector},
                    (@UnionAll T @UnionAll S @UnionAll N Tuple{Type{Array{T,N}}, Array{S,N}}),
                    Tuple{Type{Vector{Complex128}},Vector})
+
     @testintersect(Tuple{Type{Vector{Complex128}}, AbstractArray},
                    (@UnionAll T @UnionAll S @UnionAll N Tuple{Type{Array{T,N}}, Array{S,N}}),
                    Tuple{Type{Vector{Complex128}},Vector})
@@ -568,7 +613,9 @@ function test_intersection()
     @testintersect((@UnionAll T Tuple{Rational{T},T}), Tuple{Rational{Integer},Int}, Tuple{Rational{Integer},Int})
 
     @testintersect((@UnionAll T Pair{T,Ptr{T}}), (@UnionAll S Pair{Ptr{S},S}), Bottom)
-    @testintersect((@UnionAll T Tuple{T,Ptr{T}}), (@UnionAll S Tuple{Ptr{S},S}), Bottom)
+    @testintersect((@UnionAll T Tuple{T,Ptr{T}}), (@UnionAll S Tuple{Ptr{S},S}),
+                   Union{(@UnionAll T>:Ptr @UnionAll S>:Ptr{T} Tuple{Ptr{T},Ptr{S}}),
+                         (@UnionAll T>:Ptr @UnionAll S>:Ptr{T} Tuple{Ptr{S},Ptr{T}})})
 
     @testintersect((@UnionAll N Tuple{NTuple{N,Integer},NTuple{N,Integer}}),
                    Tuple{Tuple{Integer,Integer}, Tuple{Vararg{Integer}}},

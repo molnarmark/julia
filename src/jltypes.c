@@ -2074,6 +2074,12 @@ JL_DLLEXPORT jl_value_t *jl_instantiate_unionall(jl_unionall_t *u, jl_value_t *p
     return inst_type_w_(u->body, &env, NULL, 1);
 }
 
+jl_value_t *jl_substitute_var(jl_value_t *t, jl_tvar_t *var, jl_value_t *val)
+{
+    jl_typeenv_t env = { var, val, NULL };
+    return inst_type_w_(t, &env, NULL, 1);
+}
+
 jl_value_t *jl_unwrap_unionall(jl_value_t *v)
 {
     while (jl_is_unionall(v))
