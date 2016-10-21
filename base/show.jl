@@ -191,10 +191,10 @@ function print_without_params(x::ANY)
 end
 
 function show(io::IO, x::UnionAll)
-    tvar_env = get(io, :tvar_env, false)
-    if tvar_env !== false && print_without_params(x)
+    if print_without_params(x)
         return show(io, unwrap_unionall(x).name)
     end
+    tvar_env = get(io, :tvar_env, false)
     if tvar_env !== false && isa(tvar_env, AbstractVector)
         tvar_env = Any[tvar_env..., x.var]
     else
@@ -1093,32 +1093,35 @@ function show(io::IO, tv::TypeVar)
     # already printed and we don't need to print it again.
     # Otherwise, the lower bound should be printed if it is not `Bottom`
     # and the upper bound should be printed if it is not `Any`.
-    # The upper bound `Any` should also be printed if we are not in the
-    # existing `tvar_env` in order to resolve the ambiguity when printing a
-    # method signature.
-    # i.e. `foo{T,N}(::Array{T,N}, ::Vector)` should be printed as
-    # `foo{T,N}(::Array{T,N}, ::Array{T<:Any,1})`
     tvar_env = isa(io, IOContext) && get(io, :tvar_env, false)
     if isa(tvar_env, Vector{Any})
-        have_env = true
         in_env = (tv in tvar_env::Vector{Any})
     else
-        have_env = false
         in_env = false
+    end
+    function show_bound(io::IO, b::ANY)
+        parens = isa(b,UnionAll) && !print_without_params(b)
+        parens && print(io, "(")
+        show(io, b)
+        parens && print(io, ")")
     end
     lb, ub = tv.lb, tv.ub
     if !in_env && lb !== Bottom
-        isa(lb,UnionAll) && print(io, "(")
-        show(io, lb)
-        isa(lb,UnionAll) && print(io, ")")
-        print(io, "<:")
+        if ub === Any
+            write(io, tv.name)
+            print(io, ">:")
+            show_bound(io, lb)
+        else
+            show_bound(io, lb)
+            print(io, "<:")
+            write(io, tv.name)
+        end
+    else
+        write(io, tv.name)
     end
-    write(io, tv.name)
-    if have_env ? !in_env : ub !== Any
+    if !in_env && ub !== Any
         print(io, "<:")
-        isa(ub,UnionAll) && print(io, "(")
-        show(io, ub)
-        isa(ub,UnionAll) && print(io, ")")
+        show_bound(io, ub)
     end
     nothing
 end
