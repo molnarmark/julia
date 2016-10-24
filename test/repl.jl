@@ -478,7 +478,7 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
         if !ok
             LineEdit.transition(s,:abort)
         end
-        line = strip(takebuf_string(buf))
+        line = strip(String(takebuf(buf)))
         LineEdit.reset_state(s)
         return notify(c,line)
     end

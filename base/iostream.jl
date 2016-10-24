@@ -218,11 +218,8 @@ function write(s::IOStream, c::Char)
 end
 read(s::IOStream, ::Type{Char}) = Char(ccall(:jl_getutf8, UInt32, (Ptr{Void},), s.ios))
 
-takebuf_string(s::IOStream) =
-    ccall(:jl_takebuf_string, Ref{String}, (Ptr{Void},), s.ios)
-
-takebuf_array(s::IOStream) =
-    ccall(:jl_takebuf_array, Vector{UInt8}, (Ptr{Void},), s.ios)
+takebuf(s::IOStream) =
+    ccall(:jl_takebuf, Vector{UInt8}, (Ptr{Void},), s.ios)
 
 function takebuf_raw(s::IOStream)
     sz = position(s)

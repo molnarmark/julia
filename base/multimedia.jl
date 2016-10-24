@@ -63,7 +63,7 @@ _textreprmime(m::MIME"text/plain", x::AbstractString) =
 function _binreprmime(m::MIME, x)
     s = IOBuffer()
     verbose_show(s, m, x)
-    takebuf_array(s)
+    takebuf(s)
 end
 _binreprmime(m::MIME, x::Vector{UInt8}) = x
 

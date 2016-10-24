@@ -459,7 +459,7 @@ let
         eval(Base, :(have_color = true))
         buf = IOBuffer()
         print_with_color(:red, buf, "foo")
-        @test startswith(takebuf_string(buf), Base.text_colors[:red])
+        @test startswith(String(takebuf(buf)), Base.text_colors[:red])
     finally
         eval(Base, :(have_color = $(old_have_color)))
     end
