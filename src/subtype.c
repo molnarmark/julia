@@ -76,6 +76,7 @@ typedef struct {
     int envsz;                // length of envout
     int envidx;               // current index in envout
     int invdepth;             // current number of invariant constructors we're nested in
+    int ignore_free;
 } jl_stenv_t;
 
 // state manipulation utilities
@@ -164,7 +165,7 @@ static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
 {
     jl_varbinding_t *bb = lookup(e, b);
     if (bb == NULL)
-        return subtype_ufirst(b->ub, a, e);
+        return e->ignore_free || subtype_ufirst(b->ub, a, e);
     record_var_occurrence(bb, e, param);
     if (!bb->right)  // check ∀b . b<:a
         return subtype_ufirst(bb->ub, a, e);
@@ -230,7 +231,7 @@ static int var_gt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
 {
     jl_varbinding_t *bb = lookup(e, b);
     if (bb == NULL)
-        return subtype_ufirst(a, b->lb, e);
+        return e->ignore_free || subtype_ufirst(a, b->lb, e);
     record_var_occurrence(bb, e, param);
     if (!bb->right)  // check ∀b . b>:a
         return subtype_ufirst(a, bb->lb, e);
@@ -602,6 +603,7 @@ static void init_stenv(jl_stenv_t *e, jl_value_t **env, int envsz)
     e->envout = env;
     e->envidx = 0;
     e->invdepth = 0;
+    e->ignore_free = 0;
     e->Lunions.depth = 0;      e->Runions.depth = 0;
     e->Lunions.more = 0;       e->Runions.more = 0;
     e->Lunions.stacksize = 0;  e->Runions.stacksize = 0;
@@ -1120,7 +1122,10 @@ static jl_value_t *intersect_sub_datatype(jl_datatype_t *xd, jl_datatype_t *yd, 
     int envsz = jl_subtype_env_size(super_pattern);
     jl_value_t **env = alloca(envsz * sizeof(jl_value_t*)); // TODO root this
     jl_value_t *ii;
-    if (!jl_subtype_env(isuper, super_pattern, env, envsz))
+    jl_stenv_t tempe;
+    init_stenv(&tempe, env, envsz);
+    tempe.ignore_free = 1;
+    if (!subtype_in_env(isuper, super_pattern, &tempe))
         ii = jl_bottom_type;
     else
         ii = jl_apply_type(wrapper, env, envsz);
