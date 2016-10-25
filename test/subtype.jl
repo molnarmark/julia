@@ -90,6 +90,15 @@ function test_2()
     @test !issub(Tuple{Int, Tuple{Real, Integer}}, Tuple{Vararg{Int}})
 
     @test isequal_type(Tuple{Int,Int}, Tuple{Vararg{Int,2}})
+
+    @test Tuple{Int,Vararg{Int,2}} == Tuple{Int,Int,Int}
+    @test Tuple{Int,Vararg{Int,2}} === Tuple{Int,Int,Int}
+    @test Tuple{Any, Any} === Tuple{Vararg{Any,2}}
+    @test Tuple{Int,Vararg{Int,2}} == Tuple{Int,Int,Vararg{Int,1}}
+    @test Tuple{Int,Vararg{Int,2}} == Tuple{Int,Int,Int,Vararg{Int,0}}
+    @test !(Tuple{Int,Vararg{Int,2}} <: Tuple{Int,Int,Int,Vararg{Int,1}})
+    @test Tuple{Int,Vararg{Int}} == Tuple{Int,Vararg{Int}}
+    @test (@UnionAll N Tuple{Int,Vararg{Int,N}}) == (@UnionAll N Tuple{Int,Vararg{Int,N}})
 end
 
 function test_diagonal()
@@ -414,6 +423,71 @@ function test_6()
     @test issub(Ref{B}, @UnionAll BB<:U<:B Ref{U})
 end
 
+function test_Type()
+    @test issub_strict(DataType, Type)
+    @test issub_strict(Union, Type)
+    @test issub_strict(UnionAll, Type)
+    @test issub_strict(typeof(Bottom), Type)
+    @test !issub(TypeVar, Type)
+    @test !issub(Type, TypeVar)
+    @test !issub(DataType, @UnionAll T<:Number Type{T})
+    @test issub_strict(Type{Int}, DataType)
+    @test !issub((@UnionAll T<:Integer Type{T}), DataType)
+    @test isequal_type(Type{AbstractArray}, Type{AbstractArray})
+    @test !issub(Type{Int}, Type{Integer})
+    @test issub((@UnionAll T<:Integer Type{T}), (@UnionAll T<:Number Type{T}))
+    @test isa(Int, @UnionAll T<:Number Type{T})
+    @test !isa(DataType, @UnionAll T<:Number Type{T})
+
+    @test DataType <: (@UnionAll T<:Type Type{T})
+    @test isa(Tuple{},Type{Tuple{}})
+    @test !(Tuple{Int,} <: (@UnionAll T<:Tuple Type{T}))
+    @test isa(Tuple{Int}, (@UnionAll T<:Tuple Type{T}))
+end
+
+# old subtyping tests from test/core.jl
+function test_old()
+    @test Int8 <: Integer
+    @test Int32 <: Integer
+    @test Tuple{Int8,Int8} <: Tuple{Integer,Integer}
+    @test !(AbstractArray{Float64,2} <: AbstractArray{Number,2})
+    @test !(AbstractArray{Float64,1} <: AbstractArray{Float64,2})
+    @test Tuple{Integer,Vararg{Integer}} <: Tuple{Integer,Vararg{Real}}
+    @test Tuple{Integer,Float64,Vararg{Integer}} <: Tuple{Integer,Vararg{Number}}
+    @test Tuple{Integer,Float64} <: Tuple{Integer,Vararg{Number}}
+    @test Tuple{Int32,} <: Tuple{Vararg{Number}}
+    @test Tuple{} <: Tuple{Vararg{Number}}
+    @test !(Tuple{Vararg{Int32}} <: Tuple{Int32,})
+    @test !(Tuple{Vararg{Int32}} <: Tuple{Number,Integer})
+    @test !(Tuple{Vararg{Integer}} <: Tuple{Integer,Integer,Vararg{Integer}})
+    @test !(Array{Int8,1} <: Array{Any,1})
+    @test !(Array{Any,1} <: Array{Int8,1})
+    @test Array{Int8,1} <: Array{Int8,1}
+    @test !(Type{Bottom} <: Type{Int32})
+    @test !(Vector{Float64} <: Vector{Union{Float64,Float32}})
+
+    @test !isa(Array,Type{Any})
+    @test Type{Complex} <: UnionAll
+    @test isa(Complex,Type{Complex})
+    @test !(Type{Ptr{Bottom}} <: Type{Ptr})
+    @test !(Type{Rational{Int}} <: Type{Rational})
+    @test Tuple{} <: Tuple{Vararg}
+    @test Tuple{} <: @UnionAll N NTuple{N}
+    @test !(Type{Tuple{}} <: Type{Tuple{Vararg}})
+    @test !(Type{Tuple{}} <: (@UnionAll N Type{NTuple{N}}))
+
+    @test !(Type{Array{Integer}} <: Type{AbstractArray{Integer}})
+    @test !(Type{Array{Integer}} <: Type{@UnionAll T<:Integer Array{T}})
+
+    # issue #6561
+    # TODO: note that NTuple now means "tuples of all the same type"
+    #@test issubtype(Array{Tuple}, Array{NTuple})
+    @test issub_strict(NTuple, Tuple)
+    #@test issubtype(Array{Tuple{Vararg{Any}}}, Array{NTuple})
+    #@test issubtype(Array{Tuple{Vararg}}, Array{NTuple})
+    @test !issubtype(Type{Tuple{Void}}, Tuple{Type{Void}})
+end
+
 const menagerie =
     Any[Bottom, Any, Int, Int8, Integer, Real,
         Array{Int,1}, AbstractArray{Int,1},
@@ -665,16 +739,18 @@ function test_intersection()
 
     @testintersect((@UnionAll T<:Union{Float64,Array{Float64,1}} T), Real, Float64)
 
+    # issue #4805
     @testintersect((@UnionAll T<:Int Type{IT4805{1,T}}),
                    (@UnionAll S<:(@UnionAll N IT4805{N,Int}) Type{S}),
                    !Bottom)
 
+    # issue #8851
     @testintersect((@UnionAll T AbstractThing{T,2}),
                    ConcreteThing,
                    (@UnionAll T<:AbstractFloat ConcreteThing{T,2}))
 
+    # issue #11136 and #11367
     @testintersect((@UnionAll T Tuple{T, T}), (@UnionAll TB<:B11136 Tuple{A11136, TB}), Bottom)
-
     @testintersect((@UnionAll T Tuple{T, T}), (@UnionAll T2<:Foo11367 Tuple{Type{BigInt}, T2}), Bottom)
 
     @testintersect((@UnionAll N NTuple{N,Int}), (@UnionAll N NTuple{N,Float64}), Tuple{})
@@ -706,6 +782,8 @@ test_3()
 test_4()
 test_5()
 test_6()
+test_Type()
+test_old()
 test_intersection()
 test_properties()
 test_intersection_properties()
