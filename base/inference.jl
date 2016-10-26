@@ -96,6 +96,8 @@ type InferenceState
     # iteration fixed-point detection
     fixedpoint::Bool
     inworkq::Bool
+    const_api::Bool
+    const_ret::Bool
 
     # TODO: put these in InferenceParams (depends on proper multi-methodcache support)
     optimize::Bool
@@ -212,7 +214,7 @@ type InferenceState
             ssavalue_uses, ssavalue_init,
             ObjectIdDict(), # Dict{InferenceState, Vector{LineNum}}(),
             Vector{Tuple{InferenceState, Vector{LineNum}}}(),
-            false, false, optimize, cached, false)
+            false, false, false, false, optimize, cached, false)
         push!(active, frame)
         nactive[] += 1
         return frame
@@ -1673,22 +1675,39 @@ function code_for_method(method::Method, atypes::ANY, sparams::SimpleVector, wor
     return ccall(:jl_specializations_get_linfo, Ref{MethodInstance}, (Any, Any, Any, UInt), method, atypes, sparams, world)
 end
 
+function typeinf_active(linfo::MethodInstance)
+    for infstate in active
+        infstate === nothing && continue
+        infstate = infstate::InferenceState
+        if linfo === infstate.linfo
+            return infstate
+        end
+    end
+    return nothing
+end
+
+function add_backedge(frame::InferenceState, caller::InferenceState, currpc::Int)
+    update_valid_age!(frame, caller)
+    if haskey(caller.edges, frame)
+        Ws = caller.edges[frame]::Vector{Int}
+        if !(currpc in Ws)
+            push!(Ws, currpc)
+        end
+    else
+        Ws = Int[currpc]
+        caller.edges[frame] = Ws
+        push!(frame.backedges, (caller, Ws))
+    end
+end
+
 # build (and start inferring) the inference frame for the linfo
 function typeinf_frame(linfo::MethodInstance, caller, optimize::Bool, cached::Bool,
                        params::InferenceParams)
     # println(params.world, ' ', linfo)
-    frame = nothing
     if cached && linfo.inInference
         # inference on this signature may be in progress,
         # find the corresponding frame in the active list
-        for infstate in active
-            infstate === nothing && continue
-            infstate = infstate::InferenceState
-            if linfo === infstate.linfo
-                frame = infstate
-                break
-            end
-        end
+        frame = typeinf_active(linfo)
         # TODO: this assertion seems iffy
         assert(frame !== nothing)
     else
@@ -1711,18 +1730,8 @@ function typeinf_frame(linfo::MethodInstance, caller, optimize::Bool, cached::Bo
     if isa(caller, InferenceState)
         # if we were called from inside inference, the caller will be the InferenceState object
         # for which the edge was required
-        update_valid_age!(frame, caller)
-        if haskey(caller.edges, frame)
-            Ws = caller.edges[frame]::Vector{Int}
-            if !(caller.currpc in Ws)
-                push!(Ws, caller.currpc)
-            end
-        else
-            @assert caller.currpc > 0
-            Ws = Int[caller.currpc]
-            caller.edges[frame] = Ws
-            push!(frame.backedges, (caller, Ws))
-        end
+        @assert caller.currpc > 0
+        add_backedge(frame, caller, caller.currpc)
     end
     typeinf_loop(frame)
     return frame
@@ -2145,6 +2154,7 @@ function optimize(me::InferenceState)
     type_annotate!(me)
 
     # run optimization passes on fulltree
+    force_noinline = false
     if me.optimize
         # This pass is required for the AST to be valid in codegen
         # if any `SSAValue` is created by type inference. Ref issue #6068
@@ -2160,71 +2170,59 @@ function optimize(me::InferenceState)
         void_use_elim_pass!(me)
         do_coverage = coverage_enabled()
         meta_elim_pass!(me.src.code::Array{Any,1}, me.src.propagate_inbounds, do_coverage)
+        # Pop metadata before label reindexing
+        force_noinline = popmeta!(me.src.code::Array{Any,1}, :noinline)[1]
+        reindex_labels!(me)
     end
     widen_all_consts!(me.src)
+
+    if isa(me.bestguess, Const) || isconstType(me.bestguess, true)
+        me.const_ret = true
+        ispure = me.src.pure
+        if !ispure && length(me.src.code) < 10
+            ispure = true
+            for stmt in me.src.code
+                if !statement_effect_free(stmt, me.src, me.mod)
+                    ispure = false
+                    break
+                end
+            end
+            if ispure
+                for fl in me.src.slotflags
+                    if (fl & Slot_UsedUndef) != 0
+                        ispure = false
+                        break
+                    end
+                end
+            end
+        end
+        me.src.pure = ispure
+
+        do_coverage = coverage_enabled()
+        if ispure && !do_coverage
+            # use constant calling convention
+            # Do not emit `jlcall_api == 2` if coverage is enabled
+            # so that we don't need to add coverage support
+            # to the `jl_call_method_internal` fast path
+            # Still set pure flag to make sure `inference` tests pass
+            # and to possibly enable more optimization in the future
+            me.const_api = true
+            force_noinline || (me.src.inlineable = true)
+        end
+    end
+
+    # determine and cache inlineability
+    if !me.src.inlineable && !force_noinline && isdefined(me.linfo, :def)
+        me.src.inlineable = isinlineable(me.linfo.def, me.src)
+    end
+    me.src.inferred = true
     nothing
 end
 
 # inference completed on `me`
 # update the MethodInstance and notify the edges
 function finish(me::InferenceState)
-    force_noinline = false
-    if me.optimize
-        # Pop metadata before label reindexing
-        force_noinline = popmeta!(me.src.code::Array{Any,1}, :noinline)[1]
-        reindex_labels!(me)
-    end
-
-    if isa(me.bestguess, Const)
-        bg = me.bestguess::Const
-        const_ret = true
-        inferred_const = bg.val
-    elseif isconstType(me.bestguess, true)
-        const_ret = true
-        inferred_const = me.bestguess.parameters[1]
-    else
-        const_ret = false
-        inferred_const = nothing
-    end
-
-    do_coverage = coverage_enabled()
-    const_api = false
-    ispure = me.src.pure
-    inferred = me.src
-    if const_ret && inferred_const !== nothing
-        if !ispure && length(me.src.code) < 10
-            ispure = true
-            for stmt in me.src.code
-                if !statement_effect_free(stmt, me.src, me.mod)
-                    ispure = false; break
-                end
-            end
-            if ispure
-                for fl in me.src.slotflags
-                    if (fl & Slot_UsedUndef) != 0
-                        ispure = false; break
-                    end
-                end
-            end
-        end
-        if ispure && !do_coverage
-            # use constant calling convention
-            inferred = inferred_const
-            # Do not emit `jlcall_api == 2` if coverage is enabled
-            # so that we don't need to add coverage support
-            # to the `jl_call_method_internal` fast path
-            # Still set pure flag to make sure `inference` tests pass
-            # and to possibly enable more optimization in the future
-            const_api = true
-        end
-        me.src.pure = ispure
-    end
-
-    # determine and cache inlineability
-    if !me.src.inlineable && !force_noinline && isdefined(me.linfo, :def)
-        me.src.inlineable = const_api || isinlineable(me.linfo.def, me.src)
-    end
-
+    me.currpc = 1 # used by add_backedge
     if me.cached
         toplevel = !isdefined(me.linfo, :def)
         if !toplevel
@@ -2234,6 +2232,7 @@ function finish(me::InferenceState)
             min_valid = UInt(0)
             max_valid = UInt(0)
         end
+
         # check if the existing me.linfo metadata is also sufficient to describe the current inference result
         # to decide if it is worth caching it again (which would also clear any generated code)
         already_inferred = false
@@ -2245,22 +2244,40 @@ function finish(me::InferenceState)
                 end
             end
         end
+
         if !already_inferred
-            const_flags = (const_ret) << 1 | const_api
+            const_flags = (me.const_ret) << 1 | me.const_api
+            if me.const_ret
+                if isa(me.bestguess, Const)
+                    inferred_const = (me.bestguess::Const).val
+                else
+                    @assert isconstType(me.bestguess, true)
+                    inferred_const = me.bestguess.parameters[1]
+                end
+            else
+                inferred_const = nothing
+            end
+            if me.const_api
+                # use constant calling convention
+                inferred_result = inferred_const
+            else
+                inferred_result = me.src
+            end
+
             if !toplevel
-                if !const_api
+                if !me.const_api
                     keeptree = me.src.inlineable || ccall(:jl_is_cacheable_sig, Int32, (Any, Any, Any),
                         me.linfo.specTypes, me.linfo.def.sig, me.linfo.def) != 0
                     if !keeptree
-                        inferred = nothing
+                        inferred_result = nothing
                     else
                         # compress code for non-toplevel thunks
-                        inferred.code = ccall(:jl_compress_ast, Any, (Any, Any), me.linfo.def, inferred.code)
+                        inferred_result.code = ccall(:jl_compress_ast, Any, (Any, Any), me.linfo.def, inferred_result.code)
                     end
                 end
             end
             cache = ccall(:jl_set_method_inferred, Ref{MethodInstance}, (Any, Any, Any, Any, Int32, UInt, UInt),
-                me.linfo, widenconst(me.bestguess), inferred_const, inferred,
+                me.linfo, widenconst(me.bestguess), inferred_const, inferred_result,
                 const_flags, min_valid, max_valid)
             if cache !== me.linfo
                 me.linfo.inInference = false
@@ -2287,7 +2304,6 @@ function finish(me::InferenceState)
 
     # finalize and record the linfo result
     me.cached && (me.linfo.inInference = false)
-    me.src.inferred = true
     me.inferred = true
     nothing
 end
@@ -2847,9 +2863,19 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
     end
 
     # see if the method has been previously inferred (and cached)
-    linfo = code_for_method(method, metharg, methsp, sv.params.world, true)
-    if isa(linfo, MethodInstance) && isdefined(linfo, :inferred)
-        src = (linfo::MethodInstance).inferred
+    linfo = code_for_method(method, metharg, methsp, sv.params.world, true) # Union{Void, MethodInstance}
+    frame = nothing # Union{Void, InferenceState}
+    src = nothing # Union{Void, CodeInfo}
+    if isa(linfo, MethodInstance)
+        linfo = linfo::MethodInstance
+        if isdefined(linfo, :inferred) && isa(linfo.inferred, CodeInfo) && (linfo.inferred::CodeInfo).inferred
+            src = linfo.inferred
+        elseif linfo.inInference
+            frame = typeinf_active(linfo)
+            if frame !== nothing
+                src = (frame::InferenceState).src
+            end
+        end
     elseif !method.isstaged
         # if we decided in the past not to try to infer this particular signature
         # (due to signature coarsening in abstract_call_gf_by_type)
@@ -2871,7 +2897,6 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
                 end
             end
         end
-        frame = nothing
         if force_infer
             if !isa(linfo, MethodInstance)
                 linfo = code_for_method(method, metharg, methsp, sv.params.world)
@@ -2880,30 +2905,44 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
                 frame = typeinf_frame(linfo::MethodInstance, nothing, true, true, sv.params)
             end
         end
-        if isa(frame, InferenceState) && frame.inferred
+        if isa(frame, InferenceState) && frame.src.inferred
             linfo = frame.linfo
             src = frame.src
-        else
-            linfo = nothing
-            src = nothing
+            frame.inferred && (frame = nothing) # frame.linfo is already final, so we shouldn't track the frame anymore
         end
-    else
-        linfo = nothing
-        src = nothing
     end
 
-    if isa(linfo, MethodInstance) && linfo.jlcall_api == 2
+    isa(linfo, MethodInstance) || return invoke_NF()
+    linfo = linfo::MethodInstance
+    if linfo.jlcall_api == 2
         # in this case function can be inlined to a constant
-        add_backedge(linfo::MethodInstance, sv)
+        add_backedge(linfo, sv)
         return inline_as_constant(linfo.inferred, argexprs, sv)
     end
-
-    if !isa(src, CodeInfo) || !src.inferred || !src.inlineable
+    isa(src, CodeInfo) || return invoke_NF()
+    src = src::CodeInfo
+    if !src.inferred || !src.inlineable
         return invoke_NF()
     end
-    add_backedge(linfo::MethodInstance, sv)
+
+    if frame !== nothing
+        frame.cached || return invoke_NF()
+        add_backedge(frame, sv, 0)
+        if frame.const_api # handle as jlcall_api == 2
+            if isa(frame.bestguess, Const)
+                inferred_const = (frame.bestguess::Const).val
+            else
+                @assert isconstType(frame.bestguess, true)
+                inferred_const = frame.bestguess.parameters[1]
+            end
+            return inline_as_constant(inferred_const, argexprs, sv)
+        end
+        rettype = widenconst(frame.bestguess)
+    else
+        add_backedge(linfo, sv)
+        rettype = linfo.rettype
+    end
     ast = src.code
-    rettype = linfo.rettype
 
     spvals = Any[]
     for i = 1:length(methsp)
