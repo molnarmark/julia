@@ -160,6 +160,25 @@ static void record_var_occurrence(jl_varbinding_t *vb, jl_stenv_t *e, int param)
     }
 }
 
+// is var x's quantifier outside y's in nesting order
+static int var_outside(jl_stenv_t *e, jl_tvar_t *x, jl_tvar_t *y)
+{
+    jl_varbinding_t *btemp = e->vars;
+    while (btemp != NULL) {
+        if (btemp->var == x) return 0;
+        if (btemp->var == y) return 1;
+        btemp = btemp->prev;
+    }
+    return 0;
+}
+
+static int in_union(jl_uniontype_t *u, jl_value_t *x)
+{
+    if ((jl_value_t*)u == x) return 1;
+    if (!jl_is_uniontype(u)) return 0;
+    return in_union(u->a, x) || in_union(u->b, x);
+}
+
 // check that type var `b` is <: `a`, and update b's upper bound.
 static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
 {
@@ -176,6 +195,14 @@ static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
     // to work we need to compute issub(left,right) before issub(right,left),
     // since otherwise the issub(a, bb.ub) check in var_gt becomes vacuous.
     bb->ub = a;  // meet(bb->ub, a)
+    if (jl_is_typevar(a)) {
+        jl_varbinding_t *aa = lookup(e, a);
+        if (aa && !aa->right && in_union(bb->lb, a) && bb->depth0 != aa->depth0 && var_outside(e, b, (jl_tvar_t*)a)) {
+            // an "exists" var cannot equal a "forall" var inside it unless the forall
+            // var has equal bounds.
+            return subtype_ufirst(aa->ub, aa->lb, e);
+        }
+    }
     return 1;
 }
 
@@ -201,13 +228,6 @@ static int obviously_egal(jl_value_t *a, jl_value_t *b)
     }
     if (jl_is_typevar(a)) return 0;
     return !jl_is_type(a) && jl_egal(a,b);
-}
-
-static int in_union(jl_uniontype_t *u, jl_value_t *x)
-{
-    if ((jl_value_t*)u == x) return 1;
-    if (!jl_is_uniontype(u)) return 0;
-    return in_union(u->a, x) || in_union(u->b, x);
 }
 
 // compute a least upper bound of `a` and `b`
@@ -443,9 +463,7 @@ static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int param)
                 if (yy) record_var_occurrence(yy, e, param);
                 if (yr) {
                     if (xx) record_var_occurrence(xx, e, param);
-                    // this is a bit odd, but seems necessary to make this case work:
-                    // (UnionAll x<:T<:x Ref{Ref{T}}) == Ref{UnionAll x<:T<:x Ref{T}}
-                    return subtype(yy->ub, yy->lb, e, 0);
+                    return subtype(xx->lb, yy->ub, e, 0);
                 }
                 return var_lt((jl_tvar_t*)x, y, e, param);
             }
@@ -464,25 +482,25 @@ static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int param)
     }
     if (jl_is_typevar(y))
         return var_gt((jl_tvar_t*)y, x, e, param);
+    if (jl_is_uniontype(x)) {
+        if (x == y) return 1;
+        return subtype_union(y, x, e, 0, param);
+    }
     if (jl_is_uniontype(y)) {
-        if (x == y || x == ((jl_uniontype_t*)y)->a || x == ((jl_uniontype_t*)y)->b)
+        if (x == ((jl_uniontype_t*)y)->a || x == ((jl_uniontype_t*)y)->b)
             return 1;
         if (jl_is_unionall(x))
             return subtype_unionall(y, (jl_unionall_t*)x, e, 0, param);
         return subtype_union(x, y, e, 1, param);
     }
-    if (jl_is_uniontype(x)) {
-        if (jl_is_unionall(y))
-            return subtype_unionall(x, (jl_unionall_t*)y, e, 1, param);
-        return subtype_union(y, x, e, 0, param);
-    }
-    if (jl_is_unionall(y)) {
+    // handle forall ("left") vars first
+    if (jl_is_unionall(x)) {
         if (x == y && !(e->envidx < e->envsz))
             return 1;
-        return subtype_unionall(x, (jl_unionall_t*)y, e, 1, param);
-    }
-    if (jl_is_unionall(x))
         return subtype_unionall(y, (jl_unionall_t*)x, e, 0, param);
+    }
+    if (jl_is_unionall(y))
+        return subtype_unionall(x, (jl_unionall_t*)y, e, 1, param);
     if (jl_is_datatype(x) && jl_is_datatype(y)) {
         if (x == y) return 1;
         if (y == (jl_value_t*)jl_any_type) return 1;
@@ -1225,6 +1243,11 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
     }
     if (jl_is_typevar(y))
         return intersect_var((jl_tvar_t*)y, x, e, 1, param);
+    if (jl_is_uniontype(x)) {
+        if (y == ((jl_uniontype_t*)x)->a || y == ((jl_uniontype_t*)x)->b)
+            return y;
+        return intersect_union(y, x, e, 0, param);
+    }
     if (jl_is_uniontype(y)) {
         if (x == ((jl_uniontype_t*)y)->a || x == ((jl_uniontype_t*)y)->b)
             return x;
@@ -1232,15 +1255,8 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
             return intersect_unionall(y, (jl_unionall_t*)x, e, 0, param);
         return intersect_union(x, y, e, 1, param);
     }
-    if (jl_is_uniontype(x)) {
-        if (y == ((jl_uniontype_t*)x)->a || y == ((jl_uniontype_t*)x)->b)
-            return y;
-        if (jl_is_unionall(y))
-            return intersect_unionall(x, (jl_unionall_t*)y, e, 1, param);
-        return intersect_union(y, x, e, 0, param);
-    }
-    if (jl_is_unionall(y)) {
-        if (jl_is_unionall(x)) {
+    if (jl_is_unionall(x)) {
+        if (jl_is_unionall(y)) {
             jl_value_t *a=NULL, *b=jl_bottom_type;
             JL_GC_PUSH2(&a,&b);
             a = intersect_unionall(y, (jl_unionall_t*)x, e, 0, param);
@@ -1258,10 +1274,10 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
             JL_GC_POP();
             return b;
         }
-        return intersect_unionall(x, (jl_unionall_t*)y, e, 1, param);
-    }
-    if (jl_is_unionall(x))
         return intersect_unionall(y, (jl_unionall_t*)x, e, 0, param);
+    }
+    if (jl_is_unionall(y))
+        return intersect_unionall(x, (jl_unionall_t*)y, e, 1, param);
     if (jl_is_datatype(x) && jl_is_datatype(y)) {
         jl_datatype_t *xd = (jl_datatype_t*)x, *yd = (jl_datatype_t*)y;
         if (!invariant(e) || !param) {
