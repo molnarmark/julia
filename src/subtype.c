@@ -119,6 +119,66 @@ static void statestack_pop(jl_unionstate_t *st)
     st->stacksize--;
 }
 
+// type utilities
+
+// quickly test that two types are identical
+static int obviously_egal(jl_value_t *a, jl_value_t *b)
+{
+    if (a == b) return 1;
+    if (jl_typeof(a) != jl_typeof(b)) return 0;
+    if (jl_is_datatype(a)) {
+        jl_datatype_t *ad = (jl_datatype_t*)a, *bd = (jl_datatype_t*)b;
+        if (ad->name != bd->name) return 0;
+        size_t i, np = jl_nparams(ad);
+        if (np != jl_nparams(bd)) return 0;
+        for(i=0; i < np; i++) {
+            if (!obviously_egal(jl_tparam(ad,i), jl_tparam(bd,i)))
+                return 0;
+        }
+        return 1;
+    }
+    if (jl_is_uniontype(a)) {
+        return obviously_egal(((jl_uniontype_t*)a)->a, ((jl_uniontype_t*)b)->a) &&
+            obviously_egal(((jl_uniontype_t*)a)->b, ((jl_uniontype_t*)b)->b);
+    }
+    if (jl_is_typevar(a)) return 0;
+    return !jl_is_type(a) && jl_egal(a,b);
+}
+
+static int in_union(jl_uniontype_t *u, jl_value_t *x)
+{
+    if ((jl_value_t*)u == x) return 1;
+    if (!jl_is_uniontype(u)) return 0;
+    return in_union(u->a, x) || in_union(u->b, x);
+}
+
+// compute a least upper bound of `a` and `b`
+static jl_value_t *simple_join(jl_value_t *a, jl_value_t *b)
+{
+    if (a == jl_bottom_type || b == (jl_value_t*)jl_any_type || obviously_egal(a,b))
+        return b;
+    if (b == jl_bottom_type || a == (jl_value_t*)jl_any_type)
+        return a;
+    if (!(jl_is_type(a) || jl_is_typevar(a)) || !(jl_is_type(b) || jl_is_typevar(b)))
+        return (jl_value_t*)jl_any_type;
+    if (jl_is_uniontype(a) && in_union((jl_uniontype_t*)a, b))
+        return a;
+    if (jl_is_uniontype(b) && in_union((jl_uniontype_t*)b, a))
+        return b;
+    return jl_new_struct(jl_uniontype_type, a, b);
+}
+
+static jl_unionall_t *rename_unionall(jl_unionall_t *u)
+{
+    jl_tvar_t *v = jl_new_typevar(u->var->name, u->var->lb, u->var->ub);
+    jl_value_t *t = NULL;
+    JL_GC_PUSH2(&v, &t);
+    t = jl_instantiate_unionall(u, (jl_value_t*)v);
+    t = jl_new_struct(jl_unionall_type, v, t);
+    JL_GC_POP();
+    return (jl_unionall_t*)t;
+}
+
 // main subtyping algorithm
 
 static int subtype(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int param);
@@ -172,13 +232,6 @@ static int var_outside(jl_stenv_t *e, jl_tvar_t *x, jl_tvar_t *y)
     return 0;
 }
 
-static int in_union(jl_uniontype_t *u, jl_value_t *x)
-{
-    if ((jl_value_t*)u == x) return 1;
-    if (!jl_is_uniontype(u)) return 0;
-    return in_union(u->a, x) || in_union(u->b, x);
-}
-
 // check that type var `b` is <: `a`, and update b's upper bound.
 static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
 {
@@ -206,46 +259,6 @@ static int var_lt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
     return 1;
 }
 
-// quickly test that two types are identical
-static int obviously_egal(jl_value_t *a, jl_value_t *b)
-{
-    if (a == b) return 1;
-    if (jl_typeof(a) != jl_typeof(b)) return 0;
-    if (jl_is_datatype(a)) {
-        jl_datatype_t *ad = (jl_datatype_t*)a, *bd = (jl_datatype_t*)b;
-        if (ad->name != bd->name) return 0;
-        size_t i, np = jl_nparams(ad);
-        if (np != jl_nparams(bd)) return 0;
-        for(i=0; i < np; i++) {
-            if (!obviously_egal(jl_tparam(ad,i), jl_tparam(bd,i)))
-                return 0;
-        }
-        return 1;
-    }
-    if (jl_is_uniontype(a)) {
-        return obviously_egal(((jl_uniontype_t*)a)->a, ((jl_uniontype_t*)b)->a) &&
-            obviously_egal(((jl_uniontype_t*)a)->b, ((jl_uniontype_t*)b)->b);
-    }
-    if (jl_is_typevar(a)) return 0;
-    return !jl_is_type(a) && jl_egal(a,b);
-}
-
-// compute a least upper bound of `a` and `b`
-static jl_value_t *simple_join(jl_value_t *a, jl_value_t *b)
-{
-    if (a == jl_bottom_type || b == (jl_value_t*)jl_any_type || obviously_egal(a,b))
-        return b;
-    if (b == jl_bottom_type || a == (jl_value_t*)jl_any_type)
-        return a;
-    if (!(jl_is_type(a) || jl_is_typevar(a)) || !(jl_is_type(b) || jl_is_typevar(b)))
-        return (jl_value_t*)jl_any_type;
-    if (jl_is_uniontype(a) && in_union((jl_uniontype_t*)a, b))
-        return a;
-    if (jl_is_uniontype(b) && in_union((jl_uniontype_t*)b, a))
-        return b;
-    return jl_new_struct(jl_uniontype_type, a, b);
-}
-
 // check that type var `b` is >: `a`, and update b's lower bound.
 static int var_gt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
 {
@@ -259,17 +272,6 @@ static int var_gt(jl_tvar_t *b, jl_value_t *a, jl_stenv_t *e, int param)
         return 0;
     bb->lb = simple_join(bb->lb, a);
     return 1;
-}
-
-static jl_unionall_t *rename_unionall(jl_unionall_t *u)
-{
-    jl_tvar_t *v = jl_new_typevar(u->var->name, u->var->lb, u->var->ub);
-    jl_value_t *t = NULL;
-    JL_GC_PUSH2(&v, &t);
-    t = jl_instantiate_unionall(u, (jl_value_t*)v);
-    t = jl_new_struct(jl_unionall_type, v, t);
-    JL_GC_POP();
-    return (jl_unionall_t*)t;
 }
 
 // check that a type is concrete. this is used to check concrete typevars;
@@ -378,6 +380,7 @@ static int subtype_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8
     return ans;
 }
 
+// unwrap <=2 layers of UnionAlls, leaving the vars in *p1 and *p2 and returning the body
 static jl_value_t *unwrap_2_unionall(jl_value_t *t, jl_value_t **p1, jl_value_t **p2)
 {
     if (jl_is_unionall(t)) {
@@ -626,6 +629,8 @@ static void init_stenv(jl_stenv_t *e, jl_value_t **env, int envsz)
     e->Lunions.more = 0;       e->Runions.more = 0;
     e->Lunions.stacksize = 0;  e->Runions.stacksize = 0;
 }
+
+// subtyping entry points
 
 JL_DLLEXPORT int jl_subtype_env_size(jl_value_t *t)
 {
