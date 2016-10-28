@@ -70,6 +70,7 @@ function depwarn(msg, funcsym)
             throw(ErrorException(msg))
         end
     end
+    nothing
 end
 
 function firstcaller(bt::Array{Ptr{Void},1}, funcsym::Symbol)
@@ -1075,5 +1076,7 @@ eval(Base.LinAlg, quote
         Int
     end
 end)
+
+Filesystem.stop_watching(stream::Filesystem._FDWatcher) = depwarn("stop_watching(::_FDWatcher) is removed")
 
 # End deprecations scheduled for 0.6
