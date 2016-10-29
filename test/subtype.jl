@@ -361,6 +361,10 @@ function test_5()
     # required changing priority of unions and vars
     @test issub(Tuple{Array{u,1},Int}, @UnionAll T Tuple{Array{T,1}, T})
     @test issub(Tuple{Array{u,1},Int}, @UnionAll T @UnionAll S<:T Tuple{Array{T,1}, S})
+
+    @test !issub(Ref{Union{Ref{Int},Ref{Int8}}}, @UnionAll T Ref{Ref{T}})
+    @test  issub(Tuple{Union{Ref{Int},Ref{Int8}}}, @UnionAll T Tuple{Ref{T}})
+    @test !issub(Ref{Union{Ref{Int},Ref{Int8}}}, Union{Ref{Ref{Int}}, Ref{Ref{Int8}}})
 end
 
 # tricky type variable lower bounds
@@ -669,6 +673,10 @@ function test_intersection()
     @testintersect((@UnionAll T Tuple{T}), Tuple{Real}, Tuple{Real})
     @testintersect((@UnionAll T Tuple{T,T}), Tuple{Union{Float64,Int64},Int64}, Tuple{Int64,Int64})
     @testintersect((@UnionAll T Tuple{T,T}), Tuple{Int64,Union{Float64,Int64}}, Tuple{Int64,Int64})
+    @testintersect((@UnionAll Z Tuple{Z,Z}), (@UnionAll T<:Integer @UnionAll S<:Number Tuple{T,S}),
+                   @UnionAll Z<:Integer Tuple{Z,Z})
+    @testintersect((@UnionAll Z Pair{Z,Z}), (@UnionAll T<:Integer @UnionAll S<:Number Pair{T,S}),
+                   @UnionAll Z<:Integer Pair{Z,Z})
 
     @testintersect((@UnionAll T<:Vector Type{T}), (@UnionAll N Type{@UnionAll S<:Number Array{S,N}}),
                    Type{@UnionAll S<:Number Array{S,1}})
@@ -771,9 +779,22 @@ function test_intersection_properties()
     for T in menagerie
         for S in menagerie
             I = _type_intersect(T,S)
-            @test isequal_type(I, _type_intersect(S,T))
+            I2 = _type_intersect(S,T)
+            if !isequal_type(I, I2)
+                @show S
+                @show T
+                jl_(I)
+                jl_(I2)
+                @test false
+            end
+            #@test isequal_type(I, _type_intersect(S,T))
             @test issub(I, T)
-            @test issub(I, S)
+            if !issub(I, S)
+                @show S
+                @show T
+                @show I
+                @test false
+            end
             if issub(T, S)
                 @test isequal_type(I, T)
             end
