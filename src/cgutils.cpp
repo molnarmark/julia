@@ -38,6 +38,21 @@ static Value *prepare_call(Value *Callee)
                   __FUNCTION__, (ctx)->file.str().c_str(), *(ctx)->line);
 
 
+// --- hook checks ---
+
+#define JL_HOOK_TEST(params,hook)           \
+    ((params)->hooks.hook != jl_nothing)
+
+// NOTE: this is just a throwing version of jl_call1...
+#define JL_HOOK_CALL1(params,hook,arg1)     \
+    jl_value_t **argv;                      \
+    JL_GC_PUSHARGS(argv, 2);                \
+    argv[0] = (params)->hooks.hook;         \
+    argv[1] = arg1;                         \
+    jl_apply(argv, 2);                      \
+    JL_GC_POP();
+
+
 // --- string constants ---
 static StringMap<GlobalVariable*> stringConstants;
 static Value *stringConstPtr(IRBuilder<> &builder, const std::string &txt)

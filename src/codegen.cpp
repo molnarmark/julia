@@ -923,25 +923,30 @@ jl_llvm_functions_t jl_compile_linfo(jl_method_instance_t *li, jl_code_info_t *s
     f = (Function*)decls.functionObject;
     specf = (Function*)decls.specFunctionObject;
 
-    // Step 4. Prepare debug info to receive this function
-    // record that this function name came from this linfo,
-    // so we can build a reverse mapping for debug-info.
-    bool toplevel = li->def == NULL;
-    if (!toplevel) {
-        const DataLayout &DL =
-#if JL_LLVM_VERSION >= 30500
-            m->getDataLayout();
-#else
-            *jl_data_layout;
-#endif
-        // but don't remember toplevel thunks because
-        // they may not be rooted in the gc for the life of the program,
-        // and the runtime doesn't notify us when the code becomes unreachable :(
-        jl_add_linfo_in_flight((specf ? specf : f)->getName(), li, DL);
-    }
 
-    // Step 5. Add the result to the execution engine now
-    jl_finalize_module(m.release(), !toplevel);
+    if (JL_HOOK_TEST(params, module_activation)) {
+        JL_HOOK_CALL1(params, module_activation, jl_box_voidpointer(wrap(m.release())));
+    } else {
+        // Step 4. Prepare debug info to receive this function
+        // record that this function name came from this linfo,
+        // so we can build a reverse mapping for debug-info.
+        bool toplevel = li->def == NULL;
+        if (!toplevel) {
+            const DataLayout &DL =
+    #if JL_LLVM_VERSION >= 30500
+                m->getDataLayout();
+    #else
+                *jl_data_layout;
+    #endif
+            // but don't remember toplevel thunks because
+            // they may not be rooted in the gc for the life of the program,
+            // and the runtime doesn't notify us when the code becomes unreachable :(
+            jl_add_linfo_in_flight((specf ? specf : f)->getName(), li, DL);
+        }
+
+        // Step 5. Add the result to the execution engine now
+        jl_finalize_module(m.release(), !toplevel);
+    }
 
     if (li->jlcall_api != 2) {
         // if not inlineable, code won't be needed again
@@ -988,8 +993,13 @@ static Value *getModuleFlag(Module *m, StringRef Key)
 #define getModuleFlag(m,str) m->getModuleFlag(str)
 #endif
 
-static void jl_setup_module(Module *m)
+static void jl_setup_module(Module *m, jl_cgparams_t *params = &jl_default_cgparams)
 {
+    if (JL_HOOK_TEST(params, module_setup)) {
+        JL_HOOK_CALL1(params, module_setup, jl_box_voidpointer(wrap(m)));
+        return;
+    }
+
     // Some linkers (*cough* OS X) don't understand DWARF v4, so we use v2 in
     // imaging mode. The structure of v4 is slightly nicer for debugging JIT
     // code.
@@ -1256,8 +1266,9 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 // this is paired with jl_dump_function_ir and jl_dump_function_asm in particular ways:
 // misuse will leak memory or cause read-after-free
 extern "C" JL_DLLEXPORT
-void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optimize, jl_cgparams_t params)
+void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optimize, jl_cgparams_t params, jl_cghooks_t _hooks)
 {
+    params.hooks = _hooks;   // ccall doesn't know how to pass the nested jl_cghooks_t
     // `source` is `NULL` for generated functions.
     // The `isstaged` check can be removed if that is not the case anymore.
     if (linfo->def && linfo->def->source == NULL && !linfo->def->isstaged) {
@@ -1338,8 +1349,9 @@ void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optim
 
 
 extern "C" JL_DLLEXPORT
-void *jl_get_llvmf_decl(jl_method_instance_t *linfo, bool getwrapper, jl_cgparams_t params)
+void *jl_get_llvmf_decl(jl_method_instance_t *linfo, bool getwrapper, jl_cgparams_t params, jl_cghooks_t _hooks)
 {
+    params.hooks = _hooks;   // ccall doesn't know how to pass the nested jl_cghooks_t
     // `source` is `NULL` for generated functions.
     // The `isstaged` check can be removed if that is not the case anymore.
     if (linfo->def && linfo->def->source == NULL && !linfo->def->isstaged) {
@@ -1397,9 +1409,9 @@ void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
     }
     void *f;
     if (getdeclarations)
-        f = jl_get_llvmf_decl(linfo, getwrapper, jl_default_cgparams);
+        f = jl_get_llvmf_decl(linfo, getwrapper, jl_default_cgparams, jl_no_cghooks);
     else
-        f = jl_get_llvmf_defn(linfo, getwrapper, true, jl_default_cgparams);
+        f = jl_get_llvmf_defn(linfo, getwrapper, true, jl_default_cgparams, jl_no_cghooks);
     JL_GC_POP();
     return f;
 }
@@ -4207,7 +4219,7 @@ static std::unique_ptr<Module> emit_function(jl_method_instance_t *lam, jl_code_
 
     ctx.sret = false;
     Module *M = new Module(ctx.name, jl_LLVMContext);
-    jl_setup_module(M);
+    jl_setup_module(M, params);
     if (specsig) { // assumes !va and !needsparams
         std::vector<Type*> fsig(0);
         Type *rt;

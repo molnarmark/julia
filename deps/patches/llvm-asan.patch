@@ -1,0 +1,13 @@
+diff --git a/lib/Transforms/Instrumentation/AddressSanitizer.cpp b/lib/Transforms/Instrumentation/AddressSanitizer.cpp
+index 43d1b37..3efe3d6 100644
+--- a/lib/Transforms/Instrumentation/AddressSanitizer.cpp
++++ b/lib/Transforms/Instrumentation/AddressSanitizer.cpp
+@@ -404,7 +404,7 @@ static ShadowMapping getShadowMapping(Triple &TargetTriple, int LongSize,
+       if (IsKasan)
+         Mapping.Offset = kLinuxKasan_ShadowOffset64;
+       else
+-        Mapping.Offset = kSmallX86_64ShadowOffset;
++        Mapping.Offset = kDefaultShadowOffset64;
+     } else if (IsWindows && IsX86_64) {
+       Mapping.Offset = kWindowsShadowOffset64;
+     } else if (IsMIPS64)

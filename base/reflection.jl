@@ -493,6 +493,15 @@ function uncompressed_ast(m::Method, s::CodeInfo)
     return s
 end
 
+# this type mirrors jl_cghooks_t (documented in julia.h)
+immutable CodegenHooks
+    module_setup::Any
+    module_activation::Any
+
+    CodegenHooks(;module_setup=nothing, module_activation=nothing) =
+        new(module_setup, module_activation)
+end
+
 # this type mirrors jl_cgparams_t (documented in julia.h)
 immutable CodegenParams
     cached::Cint
@@ -504,14 +513,18 @@ immutable CodegenParams
     static_alloc::Cint
     dynamic_alloc::Cint
 
+    hooks::CodegenHooks
+
     CodegenParams(;cached::Bool=true,
                    runtime::Bool=true, exceptions::Bool=true,
                    track_allocations::Bool=true, code_coverage::Bool=true,
-                   static_alloc::Bool=true, dynamic_alloc::Bool=true) =
+                   static_alloc::Bool=true, dynamic_alloc::Bool=true,
+                   hooks::CodegenHooks=CodegenHooks()) =
         new(Cint(cached),
             Cint(runtime), Cint(exceptions),
             Cint(track_allocations), Cint(code_coverage),
-            Cint(static_alloc), Cint(dynamic_alloc))
+            Cint(static_alloc), Cint(dynamic_alloc),
+            hooks)
 end
 
 # Printing code representations in IR and assembly
@@ -542,9 +555,9 @@ function _dump_function(linfo::Core.MethodInstance, native::Bool, wrapper::Bool,
         throw(ArgumentError("'syntax' must be either :intel or :att"))
     end
     if native
-        llvmf = ccall(:jl_get_llvmf_decl, Ptr{Void}, (Any, Bool, CodegenParams), linfo, wrapper, params)
+        llvmf = ccall(:jl_get_llvmf_decl, Ptr{Void}, (Any, Bool, CodegenParams, CodegenHooks), linfo, wrapper, params, params.hooks)
     else
-        llvmf = ccall(:jl_get_llvmf_defn, Ptr{Void}, (Any, Bool, Bool, CodegenParams), linfo, wrapper, optimize, params)
+        llvmf = ccall(:jl_get_llvmf_defn, Ptr{Void}, (Any, Bool, Bool, CodegenParams, CodegenHooks), linfo, wrapper, optimize, params, params.hooks)
     end
     if llvmf == C_NULL
         error("could not compile the specified method")

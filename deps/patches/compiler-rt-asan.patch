@@ -1,0 +1,13 @@
+Index: lib/asan/asan_mapping.h
+===================================================================
+--- a/projects/compiler-rt/lib/asan/asan_mapping.h	(revision 256758)
++++ b/projects/compiler-rt/lib/asan/asan_mapping.h	(working copy)
+@@ -146,7 +146,7 @@
+ #  elif SANITIZER_IOS
+ #    define SHADOW_OFFSET kIosShadowOffset64
+ #  else
+-#   define SHADOW_OFFSET kDefaultShort64bitShadowOffset
++#   define SHADOW_OFFSET kDefaultShadowOffset64
+ #  endif
+ # endif
+ #endif

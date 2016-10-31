@@ -78,7 +78,11 @@ LLVM_CFLAGS += $(CFLAGS)
 LLVM_CXXFLAGS += $(CXXFLAGS)
 LLVM_CPPFLAGS += $(CPPFLAGS)
 LLVM_LDFLAGS += $(LDFLAGS)
-LLVM_TARGETS := host
+ifeq ($(LLVM_USE_CMAKE),1)
+	LLVM_TARGETS := host;NVPTX
+else
+	LLVM_TARGETS := host,nvptx
+endif
 LLVM_TARGET_FLAGS := --enable-targets=$(LLVM_TARGETS)
 LLVM_CMAKE += -DLLVM_TARGETS_TO_BUILD:STRING="$(LLVM_TARGETS)" -DCMAKE_BUILD_TYPE="$(LLVM_CMAKE_BUILDTYPE)"
 LLVM_CMAKE += -DLLVM_TOOLS_INSTALL_DIR=$(shell $(JULIAHOME)/contrib/relative_path.sh $(build_prefix) $(build_depsbindir))
@@ -479,6 +483,14 @@ $(eval $(call LLVM_PATCH,llvm-r282182)) # Remove for 4.0
 $(eval $(call LLVM_PATCH,llvm-arm-fix-prel31))
 $(eval $(call LLVM_PATCH,llvm-D25865-cmakeshlib))
 endif # LLVM_VER
+
+$(eval $(call LLVM_PATCH,llvm-asan))
+ifeq ($(LLVM_VER_SHORT),3.9)
+$(eval $(call LLVM_PATCH,llvm-D9168_argument_alignment))
+endif
+ifeq ($(BUILD_LLVM_CLANG),1)
+$(eval $(call LLVM_PATCH,compiler-rt-asan))
+endif
 
 ifeq ($(LLVM_VER),3.7.1)
 ifeq ($(BUILD_LLDB),1)
