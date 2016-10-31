@@ -1767,6 +1767,8 @@ typedef struct {
     // parameters: LLVMModuleRef as Ptr{Void}
     // return value: none
     jl_value_t *module_activation;
+
+    jl_value_t *raise_exception;
 } jl_cghooks_t;
 extern JL_DLLEXPORT jl_cghooks_t jl_no_cghooks;
 

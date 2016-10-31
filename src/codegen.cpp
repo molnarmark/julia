@@ -925,7 +925,7 @@ jl_llvm_functions_t jl_compile_linfo(jl_method_instance_t *li, jl_code_info_t *s
 
 
     if (JL_HOOK_TEST(params, module_activation)) {
-        JL_HOOK_CALL1(params, module_activation, jl_box_voidpointer(wrap(m.release())));
+        JL_HOOK_CALL(params, module_activation, 1, jl_box_voidpointer(wrap(m.release())));
     } else {
         // Step 4. Prepare debug info to receive this function
         // record that this function name came from this linfo,
@@ -996,7 +996,7 @@ static Value *getModuleFlag(Module *m, StringRef Key)
 static void jl_setup_module(Module *m, jl_cgparams_t *params = &jl_default_cgparams)
 {
     if (JL_HOOK_TEST(params, module_setup)) {
-        JL_HOOK_CALL1(params, module_setup, jl_box_voidpointer(wrap(m)));
+        JL_HOOK_CALL(params, module_setup, 1, jl_box_voidpointer(wrap(m)));
         return;
     }
 
@@ -1266,9 +1266,8 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 // this is paired with jl_dump_function_ir and jl_dump_function_asm in particular ways:
 // misuse will leak memory or cause read-after-free
 extern "C" JL_DLLEXPORT
-void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optimize, jl_cgparams_t params, jl_cghooks_t _hooks)
+void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optimize, jl_cgparams_t params)
 {
-    params.hooks = _hooks;   // ccall doesn't know how to pass the nested jl_cghooks_t
     // `source` is `NULL` for generated functions.
     // The `isstaged` check can be removed if that is not the case anymore.
     if (linfo->def && linfo->def->source == NULL && !linfo->def->isstaged) {
@@ -1349,9 +1348,8 @@ void *jl_get_llvmf_defn(jl_method_instance_t *linfo, bool getwrapper, bool optim
 
 
 extern "C" JL_DLLEXPORT
-void *jl_get_llvmf_decl(jl_method_instance_t *linfo, bool getwrapper, jl_cgparams_t params, jl_cghooks_t _hooks)
+void *jl_get_llvmf_decl(jl_method_instance_t *linfo, bool getwrapper, jl_cgparams_t params)
 {
-    params.hooks = _hooks;   // ccall doesn't know how to pass the nested jl_cghooks_t
     // `source` is `NULL` for generated functions.
     // The `isstaged` check can be removed if that is not the case anymore.
     if (linfo->def && linfo->def->source == NULL && !linfo->def->isstaged) {
@@ -1409,9 +1407,9 @@ void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
     }
     void *f;
     if (getdeclarations)
-        f = jl_get_llvmf_decl(linfo, getwrapper, jl_default_cgparams, jl_no_cghooks);
+        f = jl_get_llvmf_decl(linfo, getwrapper, jl_default_cgparams);
     else
-        f = jl_get_llvmf_defn(linfo, getwrapper, true, jl_default_cgparams, jl_no_cghooks);
+        f = jl_get_llvmf_defn(linfo, getwrapper, true, jl_default_cgparams);
     JL_GC_POP();
     return f;
 }

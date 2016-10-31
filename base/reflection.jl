@@ -495,11 +495,14 @@ end
 
 # this type mirrors jl_cghooks_t (documented in julia.h)
 immutable CodegenHooks
-    module_setup::Any
-    module_activation::Any
+    module_setup::Ptr{Void}
+    module_activation::Ptr{Void}
+    raise_exception::Ptr{Void}
 
-    CodegenHooks(;module_setup=nothing, module_activation=nothing) =
-        new(module_setup, module_activation)
+    CodegenHooks(;module_setup=nothing, module_activation=nothing, raise_exception=nothing) =
+        new(pointer_from_objref(module_setup),
+            pointer_from_objref(module_activation),
+            pointer_from_objref(raise_exception))
 end
 
 # this type mirrors jl_cgparams_t (documented in julia.h)
@@ -555,9 +558,9 @@ function _dump_function(linfo::Core.MethodInstance, native::Bool, wrapper::Bool,
         throw(ArgumentError("'syntax' must be either :intel or :att"))
     end
     if native
-        llvmf = ccall(:jl_get_llvmf_decl, Ptr{Void}, (Any, Bool, CodegenParams, CodegenHooks), linfo, wrapper, params, params.hooks)
+        llvmf = ccall(:jl_get_llvmf_decl, Ptr{Void}, (Any, Bool, CodegenParams), linfo, wrapper, params)
     else
-        llvmf = ccall(:jl_get_llvmf_defn, Ptr{Void}, (Any, Bool, Bool, CodegenParams, CodegenHooks), linfo, wrapper, optimize, params, params.hooks)
+        llvmf = ccall(:jl_get_llvmf_defn, Ptr{Void}, (Any, Bool, Bool, CodegenParams), linfo, wrapper, optimize, params)
     end
     if llvmf == C_NULL
         error("could not compile the specified method")

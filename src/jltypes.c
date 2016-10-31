@@ -3532,7 +3532,7 @@ void jl_init_types(void)
     jl_type_type_mt = jl_new_method_table(jl_type_type->name->name, ptls->current_module);
     jl_type_type->name->mt = jl_type_type_mt;
 
-    jl_no_cghooks = (jl_cghooks_t){jl_nothing, jl_nothing};
+    jl_no_cghooks = (jl_cghooks_t){jl_nothing, jl_nothing, jl_nothing};
     jl_default_cgparams = (jl_cgparams_t){1, 1, 1, 1, 1, 1, 1, jl_no_cghooks};
 
     // initialize them. lots of cycles.
