@@ -120,6 +120,41 @@ static void statestack_pop(jl_unionstate_t *st)
     st->stacksize--;
 }
 
+static void save_env(jl_stenv_t *e, jl_value_t **root, int8_t **buf)
+{
+    jl_varbinding_t *v = e->vars;
+    int len=0;
+    while (v != NULL) {
+        len++;
+        v = v->prev;
+    }
+    *root = jl_alloc_svec(len*2);
+    *buf = (int8_t*)malloc(len*2);
+    int i=0; v = e->vars;
+    while (v != NULL) {
+        jl_svecset(*root, i, v->lb); (*buf)[i] = v->occurs_inv;
+        i++;
+        jl_svecset(*root, i, v->ub); (*buf)[i] = v->occurs_cov;
+        i++;
+        v = v->prev;
+    }
+}
+
+static void restore_env(jl_stenv_t *e, jl_value_t *root, int8_t *buf)
+{
+    jl_varbinding_t *v = e->vars;
+    int i = 0;
+    while (v != NULL) {
+        if (root) v->lb = jl_svecref(root, i);
+        v->occurs_inv = buf[i];
+        i++;
+        if (root) v->ub = jl_svecref(root, i);
+        v->occurs_cov = buf[i];
+        i++;
+        v = v->prev;
+    }
+}
+
 // type utilities
 
 // quickly test that two types are identical
@@ -971,39 +1006,6 @@ static jl_value_t *intersect_unionall_(jl_value_t *t, jl_unionall_t *u, jl_stenv
     return res;
 }
 
-static void save_env(jl_stenv_t *e, jl_value_t **root, int8_t **buf)
-{
-    jl_varbinding_t *v = e->vars;
-    int len=0;
-    while (v != NULL) {
-        len++;
-        v = v->prev;
-    }
-    *root = jl_alloc_svec(len*2);
-    *buf = (int8_t*)malloc(len*2);
-    int i=0; v = e->vars;
-    while (v != NULL) {
-        jl_svecset(*root, i, v->lb); (*buf)[i] = v->occurs_inv;
-        i++;
-        jl_svecset(*root, i, v->ub); (*buf)[i] = v->occurs_cov;
-        i++;
-        v = v->prev;
-    }
-}
-
-static void restore_env(jl_stenv_t *e, jl_value_t *root, int8_t *buf)
-{
-    jl_varbinding_t *v = e->vars;
-    int i = 0;
-    while (v != NULL) {
-        v->lb = jl_svecref(root, i); v->occurs_inv = buf[i];
-        i++;
-        v->ub = jl_svecref(root, i); v->occurs_cov = buf[i];
-        i++;
-        v = v->prev;
-    }
-}
-
 static jl_value_t *intersect_unionall(jl_value_t *t, jl_unionall_t *u, jl_stenv_t *e, int8_t R, int param)
 {
     jl_value_t *res=NULL, *res2=NULL, *save=NULL, *save2=NULL;
@@ -1180,7 +1182,10 @@ static jl_value_t *intersect_invariant(jl_value_t *x, jl_value_t *y, jl_stenv_t 
     e->invdepth--;
     if (jl_is_typevar(x) && jl_is_typevar(y) && (jl_is_typevar(ii) || !jl_is_type(ii)))
         return ii;
-    JL_GC_PUSH1(&ii);
+    jl_value_t *root=NULL;
+    int8_t *buf;
+    JL_GC_PUSH2(&ii, &root);
+    save_env(e, &root, &buf);
     // TODO: pass `param`?
     if (!subtype_in_env(x, y, e)) {
         ii = NULL;
@@ -1191,6 +1196,8 @@ static jl_value_t *intersect_invariant(jl_value_t *x, jl_value_t *y, jl_stenv_t 
             ii = NULL;
         flip_vars(e);
     }
+    restore_env(e, root, buf);
+    free(buf);
     JL_GC_POP();
     return ii;
 }
@@ -1263,7 +1270,7 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
             }
             record_var_occurrence(xx, e, param);
             record_var_occurrence(yy, e, param);
-            if (xx->concrete) {
+            if (xx->concrete && !yy->concrete) {
                 return intersect_var((jl_tvar_t*)x, y, e, 0, param);
             }
             return intersect_var((jl_tvar_t*)y, x, e, 1, param);
@@ -1289,8 +1296,10 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
     }
     if (jl_is_unionall(x)) {
         if (jl_is_unionall(y)) {
-            jl_value_t *a=NULL, *b=jl_bottom_type;
+            jl_value_t *a=NULL, *b=jl_bottom_type, *res=NULL;
             JL_GC_PUSH2(&a,&b);
+            jl_value_t *unused; int8_t *buf;
+            save_env(e, &unused, &buf);
             a = intersect_unionall(y, (jl_unionall_t*)x, e, 0, param);
             if (jl_is_unionall(a)) {
                 jl_unionall_t *ua = (jl_unionall_t*)a;
@@ -1298,13 +1307,21 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
                     jl_unionall_t *ub = (jl_unionall_t*)ua->body;
                     if (jl_has_typevar(ub->var->ub, ua->var) ||
                         jl_has_typevar(ub->var->lb, ua->var)) {
+                        restore_env(e, NULL, buf); // restore counts
                         b = intersect_unionall(x, (jl_unionall_t*)y, e, 1, param);
                     }
                 }
             }
-            b = simple_join(a, b);
+            free(buf);
+            if (!jl_has_free_typevars(a) && !jl_has_free_typevars(b)) {
+                if (jl_subtype(a, b))
+                    res = b;
+                else if (jl_subtype(b, a))
+                    res = a;
+            }
+            if (!res) res = simple_join(a, b);
             JL_GC_POP();
-            return b;
+            return res;
         }
         return intersect_unionall(y, (jl_unionall_t*)x, e, 0, param);
     }
@@ -1380,10 +1397,59 @@ static jl_value_t *intersect(jl_value_t *x, jl_value_t *y, jl_stenv_t *e, int pa
     return jl_bottom_type;
 }
 
+// type intersection entry points
+
 JL_DLLEXPORT jl_value_t *jl_intersect_types(jl_value_t *x, jl_value_t *y)
 {
     jl_stenv_t e;
     init_stenv(&e, NULL, 0);
     e.intersection = 1;
     return intersect(x, y, &e, 0);
+}
+
+jl_value_t *jl_type_intersection_matching(jl_value_t *a, jl_value_t *b,
+                                          jl_svec_t **penv, jl_svec_t *tvars)
+{
+    int sza = jl_subtype_env_size(a);
+    int szb = jl_subtype_env_size(b);
+    int sz = 0;
+    jl_value_t **env = (jl_value_t**)alloca((sza>szb?sza:szb)*sizeof(jl_value_t*));
+    jl_value_t *ans = NULL;
+    if (jl_subtype_env(a, b, env, szb)) {
+        ans = a;
+        sz = szb;
+    }
+    else if (jl_subtype_env(b, a, env, sza)) {
+        ans = b;
+        sz = sza;
+    }
+    else if (jl_is_leaf_type(a) || jl_is_leaf_type(b)) {
+        return jl_bottom_type;
+    }
+    if (ans == NULL) {
+        ans = b;
+        sz = szb;
+        int i=0;
+        while (jl_is_unionall(b)) {
+            env[i++] = (jl_value_t*)((jl_unionall_t*)b)->var;
+            b = ((jl_unionall_t*)b)->body;
+        }
+    }
+    jl_svec_t *e = jl_alloc_svec(sz);
+    *penv = e;
+    int i;
+    for(i=0; i < sz; i++)
+        jl_svecset(e, i, env[i]);
+    return ans;
+}
+
+JL_DLLEXPORT jl_value_t *jl_type_intersection(jl_value_t *a, jl_value_t *b)
+{
+    if (jl_subtype(a, b))
+        return a;
+    if (jl_subtype(b, a))
+        return b;
+    if (jl_is_leaf_type(a) || jl_is_leaf_type(b))
+        return jl_bottom_type;
+    return b;
 }
